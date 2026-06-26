@@ -58,7 +58,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install pyinstaller
-          pip install -e .
+          pip install -e ".[all]"
 
       - name: Build .exe with PyInstaller
         run: |
@@ -113,7 +113,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install pyinstaller
-          pip install -e .
+          pip install -e ".[all]"
 
       - name: Build macOS .app bundle
         run: |
