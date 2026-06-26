@@ -67,7 +67,7 @@ jobs:
             --hidden-import pynput.keyboard._win32 `
             --hidden-import pynput.mouse._win32 `
             --hidden-import mss.windows `
-            deskctrl/cli.py
+            run.py
 
       - name: Create zip
         run: |
@@ -104,7 +104,7 @@ jobs:
             --hidden-import pynput.keyboard._darwin \
             --hidden-import pynput.mouse._darwin \
             --hidden-import mss.darwin \
-            deskctrl/cli.py
+            run.py
 
       - name: Create tar.gz
         run: |
@@ -155,11 +155,11 @@ jobs:
 
             | Platform | Download | Install |
             |----------|----------|---------|
-            | 🐧 Linux | `.deb` | `curl -sSL https://deskctrl.dev/install.sh \| bash` |
-            | 🪟 Windows | `.exe` (zip) | `iwr -useb https://deskctrl.dev/install.ps1 \| iex` |
-            | 🍎 macOS | `tar.gz` | `curl -sSL https://deskctrl.dev/install.sh \| bash` |
+            | [penguin]  Linux | `.deb` | `curl -sSL https://deskctrl.dev/install.sh \| bash` |
+            | [window]  Windows | `.exe` (zip) | `iwr -useb https://deskctrl.dev/install.ps1 \| iex` |
+            | [apple]  macOS | `tar.gz` | `curl -sSL https://deskctrl.dev/install.sh \| bash` |
 
-            ### 🚀 Quick install
+            ### [rocket]  Quick install
             ```bash
             # Linux / macOS
             curl -sSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | bash
