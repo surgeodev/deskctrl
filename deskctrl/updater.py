@@ -33,7 +33,7 @@ def _get_platform_asset() -> str:
     elif sys.platform == "darwin":
         return "deskctrl-macos-x64.tar.gz"
     else:
-        return "deskctrl_0.2.1-1_amd64.deb"
+        return "deskctrl_0.2.2-1_amd64.deb"
 
 
 def _get_download_url(asset_name: str, tag: str) -> str:
