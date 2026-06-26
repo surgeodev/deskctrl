@@ -1,6 +1,6 @@
 # deskctrl — Makefile for development and packaging
 
-VERSION := $(shell python3 -c "from deskctrl import __version__; print(__version__)" 2>/dev/null || echo "0.2.0")
+VERSION := $(shell python3 -c "from deskctrl import __version__; print(__version__)" 2>/dev/null || echo "0.2.1")
 REPO := surgeodev/deskctrl
 
 .PHONY: all install test clean deb release
