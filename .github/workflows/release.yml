@@ -148,10 +148,10 @@ jobs:
         with:
           tag_name: ${{ github.ref_name || format('v{0}', inputs.version) }}
           name: deskctrl ${{ github.ref_name || format('v{0}', inputs.version) }}
-          body: |
-            ## deskctrl ${{ github.ref_name || format('v{0}', inputs.version) }}
+            body: |
+              ## deskctrl ${{ github.ref_name || format('v{0}', inputs.version) }}
 
-            ### 📦 Downloads
+              ### Downloads
 
             | Platform | Download | Install |
             |----------|----------|---------|
@@ -169,7 +169,7 @@ jobs:
             ```
 
 
-            ### ✨ New in this release
+              ### New in this release
             - Seamless Monitor Control mode (Barrier-like)
             - Wayland support framework
             - Multi-platform binaries
