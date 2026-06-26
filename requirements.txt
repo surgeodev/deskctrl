@@ -1,0 +1,26 @@
+# deskctrl - Remote Desktop Controller
+#
+# Installation rapide :
+#   pip install -e .
+#
+# Installation complète (GUI + découverte) :
+#   pip install -e '.[all]'
+#   bash scripts/install.sh              ← auto, recommandé
+#
+# ── Dépendances obligatoires ────────────────────────────────────────────
+click>=8.0              # CLI
+mss>=9.0                # Capture écran (multi-OS)
+numpy>=1.21             # Calculs image
+opencv-python-headless>=4.8  # Encodage/décodage JPEG (sans GUI)
+pynput>=1.7             # Capture et simulation entrées
+Pillow>=9.0             # Traitement image
+
+# ── Dépendances optionnelles ────────────────────────────────────────────
+# GUI : pip install deskctrl[gui]  ou  pip install PyQt6
+PyQt6>=6.5
+
+# Découverte LAN : pip install deskctrl[discovery]  ou  pip install zeroconf
+zeroconf>=0.131
+
+# ── Tout installer ──────────────────────────────────────────────────────
+# pip install deskctrl[all]  ou  pip install '.[all]'

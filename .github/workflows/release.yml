@@ -1,0 +1,176 @@
+name: Build & Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. 0.2.0)'
+        required: true
+        type: string
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────
+  # Build .deb (Linux)
+  # ──────────────────────────────────────────────────────────────────
+  deb:
+    runs-on: ubuntu-latest
+    outputs:
+      filename: ${{ steps.package.outputs.filename }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build .deb package
+        id: package
+        run: |
+          chmod +x scripts/pkg-build.sh
+          ./scripts/pkg-build.sh
+          echo "filename=$(ls dist/*.deb | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: deskctrl-linux-deb
+          path: dist/*.deb
+
+  # ──────────────────────────────────────────────────────────────────
+  # Build .exe (Windows)
+  # ──────────────────────────────────────────────────────────────────
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Build .exe with PyInstaller
+        run: |
+          pyinstaller --onefile --name deskctrl `
+            --add-data "deskctrl;deskctrl" `
+            --hidden-import pynput.keyboard._win32 `
+            --hidden-import pynput.mouse._win32 `
+            --hidden-import mss.windows `
+            deskctrl/cli.py
+
+      - name: Create zip
+        run: |
+          Compress-Archive -Path dist/deskctrl.exe -DestinationPath dist/deskctrl-windows-x64.zip
+
+      - name: Upload .exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: deskctrl-windows-exe
+          path: dist/deskctrl-windows-x64.zip
+
+  # ──────────────────────────────────────────────────────────────────
+  # Build macOS universal binary
+  # ──────────────────────────────────────────────────────────────────
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Build macOS .app bundle
+        run: |
+          pyinstaller --onefile --name deskctrl \
+            --add-data "deskctrl:deskctrl" \
+            --hidden-import pynput.keyboard._darwin \
+            --hidden-import pynput.mouse._darwin \
+            --hidden-import mss.darwin \
+            deskctrl/cli.py
+
+      - name: Create tar.gz
+        run: |
+          cd dist && tar czf deskctrl-macos-x64.tar.gz deskctrl
+
+      - name: Upload macOS
+        uses: actions/upload-artifact@v4
+        with:
+          name: deskctrl-macos
+          path: dist/deskctrl-macos-x64.tar.gz
+
+  # ──────────────────────────────────────────────────────────────────
+  # Create GitHub Release (after all builds complete)
+  # ──────────────────────────────────────────────────────────────────
+  release:
+    needs: [deb, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: _release/
+
+      - name: Gather release files
+        run: |
+          mkdir -p release-files
+          cp _release/deskctrl-linux-deb/*.deb release-files/ 2>/dev/null || true
+          cp _release/deskctrl-windows-exe/*.zip release-files/ 2>/dev/null || true
+          cp _release/deskctrl-macos/*.tar.gz release-files/ 2>/dev/null || true
+          # Also include install scripts
+          cp scripts/install.sh release-files/
+          cp scripts/install.ps1 release-files/
+          ls -la release-files/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || format('v{0}', inputs.version) }}
+          name: deskctrl ${{ github.ref_name || format('v{0}', inputs.version) }}
+          body: |
+            ## deskctrl ${{ github.ref_name || format('v{0}', inputs.version) }}
+
+            ### 📦 Downloads
+
+            | Platform | Download | Install |
+            |----------|----------|---------|
+            | 🐧 Linux | `.deb` | `curl -sSL https://deskctrl.dev/install.sh \| bash` |
+            | 🪟 Windows | `.exe` (zip) | `iwr -useb https://deskctrl.dev/install.ps1 \| iex` |
+            | 🍎 macOS | `tar.gz` | `curl -sSL https://deskctrl.dev/install.sh \| bash` |
+
+            ### 🚀 Quick install
+            ```bash
+            # Linux / macOS
+            curl -sSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | bash
+
+            # Windows (PowerShell)
+            iwr -useb https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex
+            ```
+
+
+            ### ✨ New in this release
+            - Seamless Monitor Control mode (Barrier-like)
+            - Wayland support framework
+            - Multi-platform binaries
+          files: release-files/*
