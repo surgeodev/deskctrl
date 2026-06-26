@@ -159,19 +159,20 @@ jobs:
         with:
           tag_name: ${{ github.ref_name || format('v{0}', inputs.version) }}
           name: deskctrl ${{ github.ref_name || format('v{0}', inputs.version) }}
-            body: |
-              ## deskctrl ${{ github.ref_name || format('v{0}', inputs.version) }}
+          body: |
+            ## deskctrl ${{ github.ref_name || format('v{0}', inputs.version) }}
 
-              ### Downloads
+            ### Downloads
 
             | Platform | Download | Install |
             |----------|----------|---------|
-            | [penguin]  Linux | `.deb` | `curl -sSL https://deskctrl.dev/install.sh \| bash` |
-            | [window]  Windows | `.exe` (zip) | `iwr -useb https://deskctrl.dev/install.ps1 \| iex` |
-            | [apple]  macOS | `tar.gz` | `curl -sSL https://deskctrl.dev/install.sh \| bash` |
+            | Linux | .deb | curl + install.sh |
+            | Windows | .exe (zip) | install.ps1 |
+            | macOS | tar.gz | curl + install.sh |
 
-            ### [rocket]  Quick install
-            ```bash
+            ### Quick install
+
+            ```
             # Linux / macOS
             curl -sSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | bash
 
@@ -179,9 +180,10 @@ jobs:
             iwr -useb https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex
             ```
 
-
-              ### New in this release
+            ### New in this release
             - Seamless Monitor Control mode (Barrier-like)
             - Wayland support framework
             - Multi-platform binaries
+            - `deskctrl update` command
+            - Windows InnoSetup installer
           files: release-files/*
