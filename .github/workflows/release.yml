@@ -73,11 +73,21 @@ jobs:
         run: |
           Compress-Archive -Path dist/deskctrl.exe -DestinationPath dist/deskctrl-windows-x64.zip
 
-      - name: Upload .exe
+      - name: Build InnoSetup installer
+        run: |
+          choco install innosetup --no-progress
+          copy dist\deskctrl.exe scripts\
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" scripts\setup.iss
+          move scripts\deskctrl-setup-*.exe dist\
+          del scripts\deskctrl.exe
+
+      - name: Upload .exe artifacts
         uses: actions/upload-artifact@v4
         with:
           name: deskctrl-windows-exe
-          path: dist/deskctrl-windows-x64.zip
+          path: |
+            dist/deskctrl-windows-x64.zip
+            dist/deskctrl-setup-*.exe
 
   # ──────────────────────────────────────────────────────────────────
   # Build macOS universal binary
@@ -137,6 +147,7 @@ jobs:
           mkdir -p release-files
           cp _release/deskctrl-linux-deb/*.deb release-files/ 2>/dev/null || true
           cp _release/deskctrl-windows-exe/*.zip release-files/ 2>/dev/null || true
+          cp _release/deskctrl-windows-exe/*.exe release-files/ 2>/dev/null || true
           cp _release/deskctrl-macos/*.tar.gz release-files/ 2>/dev/null || true
           # Also include install scripts
           cp scripts/install.sh release-files/
