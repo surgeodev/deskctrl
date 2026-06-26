@@ -2,12 +2,12 @@ from setuptools import setup, find_packages
 
 setup(
     name="deskctrl",
-    version="0.1.0",
-    description="Remote desktop controller — cross-platform, like scrcpy for PCs",
-    long_description=open("README.md").read() if __import__("os").path.exists("README.md") else "",
+    version="0.2.0",
+    description="Remote desktop controller -- cross-platform, like scrcpy for PCs",
+    long_description=open("README.md", encoding="utf-8").read() if __import__("os").path.exists("README.md") else "",
     long_description_content_type="text/markdown",
-    author="deskctrl",
-    url="https://github.com/deskctrl/deskctrl",
+    author="surgeodev",
+    url="https://github.com/surgeodev/deskctrl",
     packages=find_packages(),
     include_package_data=True,
     python_requires=">=3.8",

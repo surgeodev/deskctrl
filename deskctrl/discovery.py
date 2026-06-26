@@ -50,7 +50,7 @@ class DiscoveryService:
             log.info(f"mDNS service registered: {self.name} on port {self.port}")
             return True
         except ImportError:
-            log.warning("zeroconf not installed — LAN discovery disabled")
+            log.warning("zeroconf not installed -- LAN discovery disabled")
             return False
         except Exception as e:
             log.warning(f"Failed to register mDNS service: {e}")
@@ -154,7 +154,7 @@ class DiscoveryBrowser:
             return True
 
         except ImportError:
-            log.warning("zeroconf not installed — LAN discovery disabled")
+            log.warning("zeroconf not installed -- LAN discovery disabled")
             return False
         except Exception as e:
             log.warning(f"Failed to start discovery browser: {e}")

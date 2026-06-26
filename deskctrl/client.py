@@ -1,4 +1,4 @@
-"""deskctrl client — receives video, sends input, optional display."""
+"""deskctrl client -- receives video, sends input, optional display."""
 
 import io
 import os
@@ -26,7 +26,7 @@ from .protocol import (
 
 log = logging.getLogger(__name__)
 
-# ── Display modes ──────────────────────────────────────────────────────────
+# ---- Display modes --------------------------------------------------------------------------------------------------------------------
 
 DISPLAY_NONE = 0     # No display (--nowindow / headless control)
 DISPLAY_OPENCV = 1   # OpenCV imshow window (fallback)
@@ -34,7 +34,7 @@ DISPLAY_PYGAME = 2   # Pygame window (low latency)
 DISPLAY_QT = 3       # PyQt6 widget (for GUI integration)
 
 
-# ── Client state ───────────────────────────────────────────────────────────
+# ---- Client state ---------------------------------------------------------------------------------------------------------------------
 
 @dataclass
 class ClientState:
@@ -52,7 +52,7 @@ class ClientState:
     hdmi_mode: bool = False
 
 
-# ── JPEG Decoder ───────────────────────────────────────────────────────────
+# ---- JPEG Decoder ---------------------------------------------------------------------------------------------------------------------
 
 class JPEGDecoder:
     """Decode JPEG bytes to numpy array (BGR)."""
@@ -64,7 +64,7 @@ class JPEGDecoder:
         return frame
 
 
-# ── Input Capturer ─────────────────────────────────────────────────────────
+# ---- Input Capturer -----------------------------------------------------------------------------------------------------------------
 
 class InputCapturer:
     """Capture keyboard and mouse input to send to server."""
@@ -171,7 +171,7 @@ class InputCapturer:
         return None, None
 
 
-# ── Client Engine ──────────────────────────────────────────────────────────
+# ---- Client Engine --------------------------------------------------------------------------------------------------------------------
 
 class DeskctrlClient:
     """Main client that connects to server and manages the session."""
@@ -337,7 +337,7 @@ class DeskctrlClient:
                 return self._frame_buffer.copy()
             return None
 
-    # ── Internal ───────────────────────────────────────────────────────
+    # ---- Internal -------------------------------------------------------------------------------------------------------------
 
     def _emit_status(self, msg: str):
         log.info(msg)

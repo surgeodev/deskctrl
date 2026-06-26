@@ -3,18 +3,18 @@
 Binary framing: [4 bytes message type][4 bytes payload length][N bytes payload]
 
 Message types:
-    HELLO / HELLO_ACK    — Handshake
-    VIDEO_FRAME           — JPEG-encoded frame (or H.264 NAL)
-    POINTER_MOVE          — Mouse move (x, y as f32)
-    POINTER_BUTTON        — Mouse button (button id, pressed bool, x, y)
-    KEY_EVENT             — Keyboard key (keysym as u32, pressed bool)
-    SCROLL                — Scroll (dx, dy as f32)
-    CLIPBOARD             — Clipboard text (utf-8)
-    RESOLUTION            — Screen resolution (width, height as u32)
-    SETTINGS              — Encoding settings
-    HDMI_TOGGLE           — Toggle HDMI capture mode
-    DISCONNECT            — Graceful disconnect
-    KEEPALIVE             — Ping/pong keepalive
+    HELLO / HELLO_ACK    -- Handshake
+    VIDEO_FRAME           -- JPEG-encoded frame (or H.264 NAL)
+    POINTER_MOVE          -- Mouse move (x, y as f32)
+    POINTER_BUTTON        -- Mouse button (button id, pressed bool, x, y)
+    KEY_EVENT             -- Keyboard key (keysym as u32, pressed bool)
+    SCROLL                -- Scroll (dx, dy as f32)
+    CLIPBOARD             -- Clipboard text (utf-8)
+    RESOLUTION            -- Screen resolution (width, height as u32)
+    SETTINGS              -- Encoding settings
+    HDMI_TOGGLE           -- Toggle HDMI capture mode
+    DISCONNECT            -- Graceful disconnect
+    KEEPALIVE             -- Ping/pong keepalive
 """
 
 import struct
@@ -23,7 +23,7 @@ from enum import IntEnum
 from typing import Optional
 
 
-# ── Message Types ──────────────────────────────────────────────────────────
+# ---- Message Types --------------------------------------------------------------------------------------------------------------------
 
 class MsgType(IntEnum):
     HELLO        = 0x01
@@ -41,7 +41,7 @@ class MsgType(IntEnum):
     KEEPALIVE    = 0xFF
 
 
-# ── Frame Header ───────────────────────────────────────────────────────────
+# ---- Frame Header ---------------------------------------------------------------------------------------------------------------------
 
 HEADER_FMT = "!II"   # network byte order: type (u32), length (u32)
 HEADER_SIZE = struct.calcsize(HEADER_FMT)  # 8 bytes
@@ -58,7 +58,7 @@ def decode_header(data: bytes) -> tuple:
     return MsgType(t), length
 
 
-# ── Payload Helpers ────────────────────────────────────────────────────────
+# ---- Payload Helpers ----------------------------------------------------------------------------------------------------------------
 
 def encode_hello(version: str) -> bytes:
     return json.dumps({"version": version}).encode("utf-8")
@@ -128,7 +128,7 @@ def decode_settings(payload: bytes) -> dict:
     return json.loads(payload.decode("utf-8"))
 
 
-# ── Video Frame helpers ────────────────────────────────────────────────────
+# ---- Video Frame helpers --------------------------------------------------------------------------------------------------------
 
 def encode_video_frame(frame_data: bytes, frame_type: str = "jpeg",
                         width: int = 0, height: int = 0,

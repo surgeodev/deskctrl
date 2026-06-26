@@ -1,4 +1,4 @@
-"""HDMI capture card support — detect and capture from HDMI-to-USB devices."""
+"""HDMI capture card support -- detect and capture from HDMI-to-USB devices."""
 
 import logging
 from typing import Optional

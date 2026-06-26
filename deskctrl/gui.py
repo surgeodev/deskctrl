@@ -1,4 +1,4 @@
-"""deskctrl GUI — PyQt6-based graphical interface for remote desktop control.
+"""deskctrl GUI -- PyQt6-based graphical interface for remote desktop control.
 
 Provides:
 - Connection dialog (manual IP/port + LAN discovery browser)
@@ -47,13 +47,13 @@ try:
     )
     _HAS_QT = True
 except ImportError:
-    log.debug("PyQt6 not available — GUI mode disabled")
+    log.debug("PyQt6 not available -- GUI mode disabled")
 
 
 if _HAS_QT:
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????????????
     # Video Display Widget
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????????????
 
     class VideoWidget(QWidget):
         """Widget that renders video frames via QPainter."""
@@ -182,9 +182,9 @@ if _HAS_QT:
 
 if _HAS_QT:
 
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????????????
     # Connection Dialog
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????????????
 
     class ConnectionDialog(QDialog):
         """Dialog for connecting to a deskctrl server."""
@@ -275,9 +275,9 @@ if _HAS_QT:
         def get_connection_info(self):
             return self._result
 
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????????????
     # Settings Panel
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????????????
 
     class SettingsPanel(QWidget):
         settings_changed = pyqtSignal(dict)
@@ -338,9 +338,9 @@ if _HAS_QT:
                     "fit_window": self.fit_check.isChecked(),
                     "hdmi_mode": self.hdmi_check.isChecked(), "headless": self.headless_check.isChecked()}
 
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????????????
     # Main Window
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????????????
 
     class MainWindow(QMainWindow):
         def __init__(self):
@@ -553,16 +553,16 @@ if _HAS_QT:
             self.disconnect()
             event.accept()
 
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????????????
     # Monitor Control Panel (Barrier-like)
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????????????
 
     class MonitorControlDialog(QDialog):
         """Dialog for configuring and running Monitor Control mode."""
 
         def __init__(self, parent=None):
             super().__init__(parent)
-            self.setWindowTitle(f"{__appname__} — Monitor Control")
+            self.setWindowTitle(f"{__appname__} -- Monitor Control")
             self.setMinimumSize(500, 400)
             self._engine = None
             self._build_ui()
@@ -570,16 +570,16 @@ if _HAS_QT:
         def _build_ui(self):
             layout = QVBoxLayout(self)
 
-            # ── Info label ────────────────────────────────────────────
+            # ---- Info label ----------------------------------------------------------------------------------------
             info = QLabel(
                 "Configure where your other machines are placed relative to\n"
-                "your screen. Move the mouse to the edge → seamless remote control."
+                "your screen. Move the mouse to the edge -> seamless remote control."
             )
             info.setWordWrap(True)
             info.setStyleSheet("color: #aaa; padding: 4px;")
             layout.addWidget(info)
 
-            # ── Server list ───────────────────────────────────────────
+            # ---- Server list -------------------------------------------------------------------------------------
             list_group = QGroupBox("Configured Servers")
             list_layout = QVBoxLayout(list_group)
             self.server_list = QListWidget()
@@ -599,7 +599,7 @@ if _HAS_QT:
             list_layout.addLayout(btn_row)
             layout.addWidget(list_group)
 
-            # ── Add server form ───────────────────────────────────────
+            # ---- Add server form -----------------------------------------------------------------------------
             add_group = QGroupBox("Add Server")
             add_form = QFormLayout(add_group)
             dir_row = QHBoxLayout()
@@ -616,7 +616,7 @@ if _HAS_QT:
             self.add_btn = QPushButton("Add")
             self.add_btn.clicked.connect(self._add_server)
             dir_row.addWidget(self.add_btn)
-            add_form.addRow("Direction → Host:Port", dir_row)
+            add_form.addRow("Direction -> Host:Port", dir_row)
 
             # Margin slider
             margin_row = QHBoxLayout()
@@ -633,7 +633,7 @@ if _HAS_QT:
             add_form.addRow(margin_row)
             layout.addWidget(add_group)
 
-            # ── Status ────────────────────────────────────────────────
+            # ---- Status ------------------------------------------------------------------------------------------------
             self.status_label = QLabel("")
             self.status_label.setWordWrap(True)
             self.status_label.setStyleSheet(
@@ -643,15 +643,15 @@ if _HAS_QT:
             self.status_label.setMinimumHeight(60)
             layout.addWidget(self.status_label)
 
-            # ── Buttons ───────────────────────────────────────────────
+            # ---- Buttons ---------------------------------------------------------------------------------------------
             btn_layout = QHBoxLayout()
-            self.start_btn = QPushButton("▶ Start Monitor Control")
+            self.start_btn = QPushButton("? Start Monitor Control")
             self.start_btn.setStyleSheet(
                 "QPushButton { background: #2a6e2a; padding: 8px 16px; }"
                 "QPushButton:hover { background: #3a8e3a; }"
             )
             self.start_btn.clicked.connect(self._toggle_engine)
-            self.stop_btn = QPushButton("⏹ Stop")
+            self.stop_btn = QPushButton("? Stop")
             self.stop_btn.setEnabled(False)
             self.stop_btn.setStyleSheet(
                 "QPushButton { background: #8e2a2a; padding: 8px 16px; }"
@@ -669,7 +669,7 @@ if _HAS_QT:
             # Load existing config
             self._load_config()
 
-        # ── Config IO ────────────────────────────────────────────────
+        # ---- Config IO ------------------------------------------------------------------------------------------------
 
         def _load_config(self):
             """Load existing monitor layout from disk."""
@@ -694,11 +694,11 @@ if _HAS_QT:
             for s in self._layout.servers:
                 self.server_list.addItem(
                     QListWidgetItem(
-                        f"{s.direction:>6s}  →  {s.name}  ({s.host}:{s.port})"
+                        f"{s.direction:>6s}  ->  {s.name}  ({s.host}:{s.port})"
                     )
                 )
 
-        # ── Actions ──────────────────────────────────────────────────
+        # ---- Actions ----------------------------------------------------------------------------------------------------
 
         def _add_server(self):
             direction = self.direction_combo.currentText()
@@ -710,7 +710,7 @@ if _HAS_QT:
             self._save_config()
             self._refresh_list()
             self.host_input.clear()
-            self._log(f"Added {direction} → {host}:{port}")
+            self._log(f"Added {direction} -> {host}:{port}")
 
         def _remove_selected(self):
             row = self.server_list.currentRow()
@@ -719,9 +719,9 @@ if _HAS_QT:
                 self._layout.remove_server(s.direction)
                 self._save_config()
                 self._refresh_list()
-                self._log(f"Removed {s.direction} → {s.name}")
+                self._log(f"Removed {s.direction} -> {s.name}")
 
-        # ── Engine ───────────────────────────────────────────────────
+        # ---- Engine -----------------------------------------------------------------------------------------------------
 
         def _toggle_engine(self):
             if self._engine and self._engine._running:
@@ -751,13 +751,13 @@ if _HAS_QT:
                 self.host_input.setEnabled(False)
                 self.port_input.setEnabled(False)
                 self.margin_slider.setEnabled(False)
-                self._log("▶ Monitor Control ACTIVE — ESC to release")
+                self._log("? Monitor Control ACTIVE -- ESC to release")
                 self.setWindowTitle(
-                    f"{__appname__} — Monitor Control (running)"
+                    f"{__appname__} -- Monitor Control (running)"
                 )
             else:
                 self._engine = None
-                self._log("❌ Failed to start Monitor Control")
+                self._log("? Failed to start Monitor Control")
 
         def _stop_engine(self):
             if self._engine:
@@ -770,8 +770,8 @@ if _HAS_QT:
             self.host_input.setEnabled(True)
             self.port_input.setEnabled(True)
             self.margin_slider.setEnabled(True)
-            self._log("⏹ Monitor Control stopped")
-            self.setWindowTitle(f"{__appname__} — Monitor Control")
+            self._log("? Monitor Control stopped")
+            self.setWindowTitle(f"{__appname__} -- Monitor Control")
 
         def _log(self, msg):
             current = self.status_label.text()
@@ -782,9 +782,9 @@ if _HAS_QT:
             self._stop_engine()
             event.accept()
 
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????????????
     # Launch helper (Qt available)
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????????????
 
     def launch_gui():
         app = QApplication(sys.argv)

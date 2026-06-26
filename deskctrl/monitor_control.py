@@ -1,10 +1,10 @@
-"""deskctrl Monitor Control — seamless mouse transition between machines.
+"""deskctrl Monitor Control -- seamless mouse transition between machines.
 
 Like Barrier / Synergy: configure where your other machines' screens are
 relative to yours (left, right, top, bottom). When the mouse hits that edge,
 it seamlessly takes control of the remote machine.
 
-Pure input forwarding — no video streaming — for zero latency.
+Pure input forwarding -- no video streaming -- for zero latency.
 
 Usage:
     # Start with a config file
@@ -36,7 +36,7 @@ from .protocol import (
 
 log = logging.getLogger(__name__)
 
-# ── Configuration ──────────────────────────────────────────────────────────
+# ---- Configuration --------------------------------------------------------------------------------------------------------------------
 
 DEFAULT_CONFIG_DIR = os.path.expanduser("~/.config/deskctrl")
 DEFAULT_CONFIG_FILE = os.path.join(DEFAULT_CONFIG_DIR, "monitor_layout.json")
@@ -65,7 +65,7 @@ class MonitorLayout:
     activation_margin: int = 5     # pixels from edge to trigger
     escape_key: str = "esc"        # key to release control
 
-    # ── IO ────────────────────────────────────────────────────────────
+    # ---- IO ------------------------------------------------------------------------------------------------------------------------
 
     @classmethod
     def from_file(cls, path: str) -> "MonitorLayout":
@@ -86,7 +86,7 @@ class MonitorLayout:
                 "escape_key": self.escape_key,
             }, f, indent=2)
 
-    # ── Helpers ───────────────────────────────────────────────────────
+    # ---- Helpers -------------------------------------------------------------------------------------------------------------
 
     def add_server(self, direction: str, host: str, port: int = 5830,
                    name: str = "", **kw):
@@ -108,60 +108,60 @@ class MonitorLayout:
         return None
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ???????????????????????????????????????????????????????????????????????????
 # Monitor Control Engine
-# ═══════════════════════════════════════════════════════════════════════════
+# ???????????????????????????????????????????????????????????????????????????
 
 class MonitorControlEngine:
-    """Seamless cursor transition between machines — the Barrier/Synergy mode.
+    """Seamless cursor transition between machines -- the Barrier/Synergy mode.
 
     Monitors local mouse position. When the cursor hits a configured edge,
     connects to the corresponding remote server and forwards all input.
     Press ESC to release control.
 
-    Pure input forwarding — zero video latency.
+    Pure input forwarding -- zero video latency.
     """
 
     def __init__(self, layout: MonitorLayout):
         self.layout = layout
 
-        # ── Local screen ──────────────────────────────────────────────
+        # ---- Local screen --------------------------------------------------------------------------------------------
         self._screen_w: int = 0
         self._screen_h: int = 0
 
-        # ── Mouse tracking ────────────────────────────────────────────
+        # ---- Mouse tracking ----------------------------------------------------------------------------------------
         self._mouse_x: float = 0
         self._mouse_y: float = 0
 
-        # ── Server connections ────────────────────────────────────────
+        # ---- Server connections --------------------------------------------------------------------------------
         # direction -> (socket, server_config)
         self._connections: Dict[str, Tuple[socket.socket, ServerConfig]] = {}
         self._conn_lock = threading.Lock()
 
-        # ── Active control state ──────────────────────────────────────
+        # ---- Active control state ----------------------------------------------------------------------------
         self._active_direction: Optional[str] = None
         self._active_sock: Optional[socket.socket] = None
         self._active_config: Optional[ServerConfig] = None
         self._active_lock = threading.Lock()
 
-        # ── Lifecycle ─────────────────────────────────────────────────
+        # ---- Lifecycle -------------------------------------------------------------------------------------------------
         self._running = False
         self._mouse_listener = None
         self._keyboard_listener = None
         self._reconnect_threads: List[threading.Thread] = []
 
-        # ── Callbacks ─────────────────────────────────────────────────
+        # ---- Callbacks -------------------------------------------------------------------------------------------------
         self.on_status: Optional[Callable[[str], None]] = None
         self.on_control_start: Optional[Callable[[str, str], None]] = None
         self.on_control_end: Optional[Callable[[], None]] = None
 
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
     # Lifecycle
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
 
     def start(self) -> bool:
         """Start the engine: discover screen, connect servers, listen for input."""
-        # ── Get local screen ──────────────────────────────────────────
+        # ---- Get local screen ------------------------------------------------------------------------------------
         try:
             import mss
             with mss.mss() as sct:
@@ -169,16 +169,16 @@ class MonitorControlEngine:
                 self._screen_w = m["width"]
                 self._screen_h = m["height"]
         except Exception as e:
-            self._emit(f"❌ Cannot get screen size: {e}")
+            self._emit(f"? Cannot get screen size: {e}")
             return False
 
-        self._emit(f"Monitor Control ready — {self._screen_w}x{self._screen_h}")
+        self._emit(f"Monitor Control ready -- {self._screen_w}x{self._screen_h}")
         self._emit(f"Servers: {len(self.layout.servers)}")
         for s in self.layout.servers:
-            self._emit(f"  {s.direction:>6s} → {s.name} ({s.host}:{s.port})")
-        self._emit("Move mouse to an edge to take control • ESC to release")
+            self._emit(f"  {s.direction:>6s} -> {s.name} ({s.host}:{s.port})")
+        self._emit("Move mouse to an edge to take control * ESC to release")
 
-        # ── Connect servers in background ─────────────────────────────
+        # ---- Connect servers in background ---------------------------------------------------------
         self._running = True
         for cfg in self.layout.servers:
             t = threading.Thread(
@@ -188,7 +188,7 @@ class MonitorControlEngine:
             t.start()
             self._reconnect_threads.append(t)
 
-        # ── Start input listeners ─────────────────────────────────────
+        # ---- Start input listeners -------------------------------------------------------------------------
         from pynput.mouse import Listener as MouseListener
         from pynput.keyboard import Listener as KeyboardListener
 
@@ -227,19 +227,19 @@ class MonitorControlEngine:
 
         self._emit("Monitor Control stopped")
 
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
     # Connection management
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
 
     def _connect_loop(self, cfg: ServerConfig):
-        """Persistent connection loop — reconnects on failure."""
+        """Persistent connection loop -- reconnects on failure."""
         while self._running:
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(5.0)
                 sock.connect((cfg.host, cfg.port))
 
-                # ── Handshake ─────────────────────────────────────────
+                # ---- Handshake ---------------------------------------------------------------------------------
                 data = self._recv_exact(sock, HEADER_SIZE)
                 if not data:
                     raise ConnectionError("no hello")
@@ -250,7 +250,7 @@ class MonitorControlEngine:
                 self._send_msg(sock, MsgType.HELLO_ACK,
                                encode_hello(f"{__version__}-monitor"))
 
-                # ── Read server resolution ────────────────────────────
+                # ---- Read server resolution --------------------------------------------------------
                 data = self._recv_exact(sock, HEADER_SIZE)
                 if data:
                     mt, length = decode_header(data)
@@ -261,7 +261,7 @@ class MonitorControlEngine:
                             cfg.screen_width = w
                             cfg.screen_height = h
 
-                # ── Register connection ───────────────────────────────
+                # ---- Register connection -------------------------------------------------------------
                 with self._conn_lock:
                     old = self._connections.get(cfg.direction)
                     if old:
@@ -272,10 +272,10 @@ class MonitorControlEngine:
                     self._connections[cfg.direction] = (sock, cfg)
 
                 sock.settimeout(None)
-                self._emit(f"✅ Connected {cfg.direction:>6s} — {cfg.name} "
+                self._emit(f"? Connected {cfg.direction:>6s} -- {cfg.name} "
                            f"({cfg.screen_width}x{cfg.screen_height})")
 
-                # ── Keepalive ping loop ───────────────────────────────
+                # ---- Keepalive ping loop -------------------------------------------------------------
                 while self._running:
                     try:
                         sock.sendall(encode_msg(MsgType.KEEPALIVE))
@@ -291,13 +291,13 @@ class MonitorControlEngine:
                             del self._connections[cfg.direction]
                     if self._active_direction == cfg.direction:
                         self._deactivate()
-                    self._emit(f"⚠️  {cfg.direction:>6s} — {cfg.name}: {e}")
+                    self._emit(f"??  {cfg.direction:>6s} -- {cfg.name}: {e}")
                     time.sleep(3)  # wait before retry
                 continue
 
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
     # Mouse/keyboard event handlers
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
 
     def _on_mouse_move(self, x: float, y: float):
         if not self._running:
@@ -306,7 +306,7 @@ class MonitorControlEngine:
 
         with self._active_lock:
             if self._active_direction:
-                # ── Forward to active server ──────────────────────────
+                # ---- Forward to active server ----------------------------------------------------
                 if self._active_sock is None:
                     return
                 sx, sy = self._map_to_server(x, y, self._active_config)
@@ -317,7 +317,7 @@ class MonitorControlEngine:
                 except OSError:
                     self._deactivate()
             else:
-                # ── Check for edge activation ─────────────────────────
+                # ---- Check for edge activation -------------------------------------------------
                 direction = self._detect_edge(x, y)
                 if direction:
                     self._activate(direction)
@@ -354,12 +354,12 @@ class MonitorControlEngine:
             return
         from pynput.keyboard import Key
 
-        # ── ESC: release control ──────────────────────────────────────
+        # ---- ESC: release control ----------------------------------------------------------------------------
         if key == Key.esc and self._active_direction:
             self._deactivate()
             return
 
-        # ── Forward key to active server ──────────────────────────────
+        # ---- Forward key to active server ------------------------------------------------------------
         with self._active_lock:
             if self._active_sock is None:
                 return
@@ -371,9 +371,9 @@ class MonitorControlEngine:
                 except OSError:
                     self._deactivate()
 
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
     # Edge detection
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
 
     def _detect_edge(self, x: float, y: float) -> Optional[str]:
         """Return direction name if cursor is within margin of a configured edge."""
@@ -391,9 +391,9 @@ class MonitorControlEngine:
                 return d
         return None
 
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
     # Coordinate mapping
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
 
     def _map_to_server(self, x: float, y: float,
                        cfg: Optional[ServerConfig]) -> Tuple[float, float]:
@@ -416,9 +416,9 @@ class MonitorControlEngine:
             return max(0, min(sw - 1, int(ratio_x * sw))), 0
         return x, y
 
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
     # Activate / deactivate
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
 
     def _activate(self, direction: str):
         """Start controlling the server in the given direction."""
@@ -444,7 +444,7 @@ class MonitorControlEngine:
             self._deactivate()
             return
 
-        self._emit(f"▶ Controlling {cfg.name} [{direction}] — "
+        self._emit(f"? Controlling {cfg.name} [{direction}] -- "
                    f"ESC to release")
 
         if self.on_control_start:
@@ -459,13 +459,13 @@ class MonitorControlEngine:
             self._active_sock = None
             self._active_config = None
 
-        self._emit("◀ Control released")
+        self._emit("? Control released")
         if self.on_control_end:
             self.on_control_end()
 
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
     # Utilities
-    # ═══════════════════════════════════════════════════════════════════
+    # ???????????????????????????????????????????????????????????????????
 
     def _send_msg(self, sock: socket.socket, mt: MsgType, payload: bytes = b""):
         """Send a framed message over a raw socket."""

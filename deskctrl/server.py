@@ -1,4 +1,4 @@
-"""deskctrl server — captures screen, streams video, receives input."""
+"""deskctrl server -- captures screen, streams video, receives input."""
 
 import io
 import os
@@ -31,7 +31,7 @@ from .platform import IS_WINDOWS, IS_LINUX, IS_MACOS
 
 log = logging.getLogger(__name__)
 
-# ── Screen Capture ─────────────────────────────────────────────────────────
+# ---- Screen Capture -----------------------------------------------------------------------------------------------------------------
 
 class ScreenCapture:
     """Cross-platform screen capture using mss."""
@@ -65,7 +65,7 @@ class ScreenCapture:
         self._sct.close()
 
 
-# ── JPEG Encoder ───────────────────────────────────────────────────────────
+# ---- JPEG Encoder ---------------------------------------------------------------------------------------------------------------------
 
 class JPEGEncoder:
     """Encodes numpy frames to JPEG bytes."""
@@ -91,7 +91,7 @@ class JPEGEncoder:
         self._encode_params[1] = self.quality
 
 
-# ── Input Simulator ────────────────────────────────────────────────────────
+# ---- Input Simulator ----------------------------------------------------------------------------------------------------------------
 
 class InputSimulator:
     """Simulate keyboard/mouse input on the host machine."""
@@ -108,7 +108,7 @@ class InputSimulator:
             self._mouse = MouseCtrl()
             self._keyboard = KeyCtrl()
         except ImportError:
-            log.warning("pynput not available — input simulation disabled")
+            log.warning("pynput not available -- input simulation disabled")
 
     def move_mouse(self, x: float, y: float, relative: bool = False):
         if not self._mouse:
@@ -194,7 +194,7 @@ class InputSimulator:
         self._keyboard = None
 
 
-# ── HDMI Capture Source ────────────────────────────────────────────────────
+# ---- HDMI Capture Source --------------------------------------------------------------------------------------------------------
 
 class HDMICapture:
     """Capture from HDMI capture card via OpenCV."""
@@ -252,7 +252,7 @@ class HDMICapture:
             self._cap.release()
 
 
-# ── Server Engine ──────────────────────────────────────────────────────────
+# ---- Server Engine --------------------------------------------------------------------------------------------------------------------
 
 class DeskctrlServer:
     """Main server that accepts client connections and streams screen."""
