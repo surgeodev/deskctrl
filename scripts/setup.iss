@@ -25,6 +25,7 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
 ChangesEnvironment=yes
+SetupIconFile=deskctrl.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -35,11 +36,12 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "deskctrl.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "deskctrl.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Comment: "Launch deskctrl GUI"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\deskctrl.ico"; Comment: "Launch deskctrl GUI"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; Comment: "Launch deskctrl GUI"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\deskctrl.ico"; Tasks: desktopicon; Comment: "Launch deskctrl GUI"
 Name: "{group}\CLI"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--help"; Comment: "Open CLI help in terminal"
 
 [Run]

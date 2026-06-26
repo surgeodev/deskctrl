@@ -63,7 +63,13 @@ jobs:
       - name: Build .exe with PyInstaller
         run: |
           pyinstaller --onefile --name deskctrl `
+            --icon deskctrl.ico `
             --add-data "deskctrl;deskctrl" `
+            --hidden-import PyQt6 `
+            --hidden-import PyQt6.QtCore `
+            --hidden-import PyQt6.QtGui `
+            --hidden-import PyQt6.QtWidgets `
+            --hidden-import PyQt6.QtNetwork `
             --hidden-import pynput.keyboard._win32 `
             --hidden-import pynput.mouse._win32 `
             --hidden-import mss.windows `
@@ -77,9 +83,11 @@ jobs:
         run: |
           choco install innosetup --no-progress
           copy dist\deskctrl.exe scripts\
+          copy deskctrl.ico scripts\
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" scripts\setup.iss
           move scripts\deskctrl-setup-*.exe dist\
           del scripts\deskctrl.exe
+          del scripts\deskctrl.ico
 
       - name: Upload .exe artifacts
         uses: actions/upload-artifact@v4
@@ -110,7 +118,13 @@ jobs:
       - name: Build macOS .app bundle
         run: |
           pyinstaller --onefile --name deskctrl \
+            --icon deskctrl.png \
             --add-data "deskctrl:deskctrl" \
+            --hidden-import PyQt6 \
+            --hidden-import PyQt6.QtCore \
+            --hidden-import PyQt6.QtGui \
+            --hidden-import PyQt6.QtWidgets \
+            --hidden-import PyQt6.QtNetwork \
             --hidden-import pynput.keyboard._darwin \
             --hidden-import pynput.mouse._darwin \
             --hidden-import mss.darwin \
