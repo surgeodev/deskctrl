@@ -35,14 +35,52 @@ def _ensure_windows():
 
 
 def _is_admin() -> bool:
-    """Return True if running with admin privileges on Windows."""
+    """Return True if running with elevated admin privileges on Windows.
+
+    Checks token elevation (works with UAC). Falls back to trying a
+    simple admin-only operation if the API check fails.
+    """
     if not IS_WINDOWS:
         return False
     try:
         import ctypes
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        from ctypes import wintypes
+
+        # Token elevation check (reliable with UAC)
+        TOKEN_QUERY = 0x0008
+        TokenElevation = 20
+
+        h_process = ctypes.windll.kernel32.GetCurrentProcess()
+        h_token = wintypes.HANDLE()
+
+        if not ctypes.windll.advapi32.OpenProcessToken(
+            h_process, TOKEN_QUERY, ctypes.byref(h_token)
+        ):
+            return False
+
+        elevation = wintypes.DWORD()
+        size = wintypes.DWORD(ctypes.sizeof(elevation))
+
+        result = ctypes.windll.advapi32.GetTokenInformation(
+            h_token, TokenElevation,
+            ctypes.byref(elevation), size, ctypes.byref(size),
+        )
+        ctypes.windll.kernel32.CloseHandle(h_token)
+        return result != 0 and elevation.value != 0
     except Exception:
-        return False
+        # If the API check fails (e.g. older Windows), try a real operation
+        try:
+            import tempfile, os
+            test_path = os.path.join(
+                os.environ.get("SystemRoot", "C:\\Windows"),
+                "Temp", "__deskctrl_admin_test.tmp"
+            )
+            with open(test_path, "w") as f:
+                f.write("")
+            os.unlink(test_path)
+            return True
+        except (IOError, PermissionError, OSError):
+            return False
 
 
 def _find_in_tree(dirpath: Path, filename: str) -> Optional[Path]:
