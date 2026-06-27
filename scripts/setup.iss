@@ -2,7 +2,7 @@
 ; Produces a proper Windows Setup.exe
 
 #define MyAppName "deskctrl"
-#define MyAppVersion "0.2.3"
+#define MyAppVersion "0.2.4"
 #define MyAppPublisher "surgeodev"
 #define MyAppURL "https://github.com/surgeodev/deskctrl"
 #define MyAppExeName "deskctrl.exe"

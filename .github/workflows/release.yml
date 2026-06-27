@@ -62,7 +62,7 @@ jobs:
 
       - name: Build .exe with PyInstaller
         run: |
-          pyinstaller --onefile --noconsole --name deskctrl `
+          pyinstaller --onefile --console --name deskctrl `
             --icon deskctrl.ico `
             --add-data "deskctrl;deskctrl" `
             --hidden-import PyQt6 `
@@ -84,7 +84,9 @@ jobs:
           choco install innosetup --no-progress
           copy dist\deskctrl.exe scripts\
           copy deskctrl.ico scripts\
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" scripts\setup.iss
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          if (-not $ver) { $ver = "${{ inputs.version }}" }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$ver" scripts\setup.iss
           move scripts\deskctrl-setup-*.exe dist\
           del scripts\deskctrl.exe
           del scripts\deskctrl.ico

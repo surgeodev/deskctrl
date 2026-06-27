@@ -67,13 +67,45 @@ class JPEGDecoder:
 # ---- Input Capturer -----------------------------------------------------------------------------------------------------------------
 
 class InputCapturer:
-    """Capture keyboard and mouse input to send to server."""
+    """Capture keyboard and mouse input to send to server.
 
-    def __init__(self, send_callback: Callable[[MsgType, bytes], None]):
+    Coordinates from the client are scaled to the server's screen
+    resolution so the remote cursor matches the local pointer.
+    """
+
+    def __init__(self, send_callback: Callable[[MsgType, bytes], None],
+                 server_width: int = 0, server_height: int = 0):
         self._send = send_callback
+        self._server_w = server_width
+        self._server_h = server_height
+        self._client_w, self._client_h = self._get_client_screen_size()
         self._mouse_listener = None
         self._keyboard_listener = None
         self._running = False
+
+    def set_server_resolution(self, w: int, h: int):
+        """Update server resolution (received after handshake)."""
+        self._server_w = w
+        self._server_h = h
+
+    def _get_client_screen_size(self):
+        """Detect the client's own screen dimensions."""
+        try:
+            import mss
+            with mss.mss() as sct:
+                mon = sct.monitors[1]  # primary monitor
+                return mon["width"], mon["height"]
+        except Exception:
+            return 1920, 1080  # safe fallback
+
+    def _scale(self, x: float, y: float):
+        """Scale client coordinates to server screen space."""
+        if self._server_w and self._server_h and self._client_w and self._client_h:
+            return (
+                x * self._server_w / self._client_w,
+                y * self._server_h / self._client_h,
+            )
+        return x, y
 
     def start(self):
         """Start listening for input events."""
@@ -103,14 +135,16 @@ class InputCapturer:
     def _on_mouse_move(self, x, y):
         if not self._running:
             return
-        payload = encode_pointer_move(x, y, relative=False)
+        sx, sy = self._scale(x, y)
+        payload = encode_pointer_move(sx, sy, relative=False)
         self._send(MsgType.POINTER_MOVE, payload)
 
     def _on_mouse_click(self, x, y, button, pressed):
         if not self._running:
             return
         btn_id = self._button_id(button)
-        payload = encode_pointer_button(btn_id, pressed, x, y)
+        sx, sy = self._scale(x, y)
+        payload = encode_pointer_button(btn_id, pressed, sx, sy)
         self._send(MsgType.POINTER_BUTTON, payload)
 
     def _on_scroll(self, x, y, dx, dy):
@@ -254,6 +288,8 @@ class DeskctrlClient:
                     self.state.screen_width = w
                     self.state.screen_height = h
                     self._emit_status(f"Server screen: {w}x{h}")
+                    if self._input:
+                        self._input.set_server_resolution(w, h)
                     if self.on_resolution:
                         self.on_resolution(w, h)
 
@@ -282,7 +318,11 @@ class DeskctrlClient:
 
             # Start input capture (if display mode allows input)
             if self.display_mode != DISPLAY_NONE:
-                self._input = InputCapturer(self._send_input)
+                self._input = InputCapturer(
+                    self._send_input,
+                    server_width=self.state.screen_width,
+                    server_height=self.state.screen_height,
+                )
                 self._input.start()
 
             if self.on_connected:
@@ -319,6 +359,10 @@ class DeskctrlClient:
         self.state.connected = False
         if self.on_disconnected:
             self.on_disconnected()
+
+    def send_input(self, msg_type: MsgType, payload: bytes):
+        """Send an input event to the server."""
+        self._send_input(msg_type, payload)
 
     def send_settings(self, **kwargs):
         """Send settings update to server."""
@@ -437,6 +481,8 @@ class DeskctrlClient:
                 w, h = decode_resolution(payload)
                 self.state.screen_width = w
                 self.state.screen_height = h
+                if self._input:
+                    self._input.set_server_resolution(w, h)
                 if self.on_resolution:
                     self.on_resolution(w, h)
             elif msg_type == MsgType.KEEPALIVE:

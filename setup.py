@@ -16,6 +16,7 @@ setup(
         "mss>=9.0",
         "numpy>=1.21",
         "opencv-python-headless>=4.8",
+        "pygame>=2.5",
         "pynput>=1.7",
         "Pillow>=9.0",
     ],

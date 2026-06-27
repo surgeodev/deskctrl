@@ -482,18 +482,17 @@ def _run_client(host: str, port: int, quality: int = 80,
         sys.exit(1)
 
 
-def _run_client_opencv(host: str, port: int, quality: int = 80,
-                       fps: int = 30, fullscreen: bool = False):
-    """Fallback client display using OpenCV window."""
-    import cv2
-
-
 def _run_client_pygame(host: str, port: int, quality: int = 80,
                        fps: int = 30, fullscreen: bool = False):
-    """Client display using pygame."""
+    """Client display using pygame with integrated mouse/keyboard input."""
     import pygame as pg
 
     from .client import DeskctrlClient, DISPLAY_NONE
+    from .protocol import (
+        MsgType,
+        encode_pointer_move, encode_pointer_button,
+        encode_key_event, encode_scroll,
+    )
 
     pg.init()
     pg.display.set_caption(f"{__appname__} -- {host}:{port}")
@@ -501,34 +500,64 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
     client = DeskctrlClient(
         host=host, port=port, display_mode=DISPLAY_NONE,
     )
-    # We handle display ourselves
+    # We handle display and input ourselves
     screen = None
     clock = pg.time.Clock()
     running = True
     frame_surface = None
+    server_w = 0
+    server_h = 0
+    window_active = True  # input only sent when window is focused
+
+    # pygame button -> deskctrl button (1=left, 2=middle, 3=right, 4=x1, 5=x2)
+    _BTN_MAP = {1: 1, 2: 3, 3: 2, 4: 4, 5: 5}
+
+    def _pygame_keysym(key) -> tuple:
+        """Convert pygame key to (keysym, keycode)."""
+        if 32 <= key <= 126:
+            return key, 0
+        _SPECIAL = {
+            pg.K_BACKSPACE: 0xFF08, pg.K_TAB: 0xFF09, pg.K_RETURN: 0xFF0D,
+            pg.K_ESCAPE: 0xFF1B, pg.K_HOME: 0xFF50, pg.K_END: 0xFF57,
+            pg.K_LEFT: 0xFF51, pg.K_RIGHT: 0xFF53, pg.K_UP: 0xFF52,
+            pg.K_DOWN: 0xFF54, pg.K_PAGEUP: 0xFF55, pg.K_PAGEDOWN: 0xFF56,
+            pg.K_DELETE: 0xFFFF, pg.K_LSHIFT: 0xFFE1, pg.K_RSHIFT: 0xFFE2,
+            pg.K_LCTRL: 0xFFE3, pg.K_RCTRL: 0xFFE4, pg.K_CAPSLOCK: 0xFFE5,
+            pg.K_LALT: 0xFFE7, pg.K_RALT: 0xFFE8, pg.K_LMETA: 0xFFEB,
+            pg.K_RMETA: 0xFFEC, pg.K_SPACE: 0x0020,
+            pg.K_F1: 0xFFBE, pg.K_F2: 0xFFBF, pg.K_F3: 0xFFC0,
+            pg.K_F4: 0xFFC1, pg.K_F5: 0xFFC2, pg.K_F6: 0xFFC3,
+            pg.K_F7: 0xFFC4, pg.K_F8: 0xFFC5, pg.K_F9: 0xFFC6,
+            pg.K_F10: 0xFFC7, pg.K_F11: 0xFFC8, pg.K_F12: 0xFFC9,
+        }
+        return (_SPECIAL[key], 0) if key in _SPECIAL else (key, 0)
+
+    def _scale_coords(px, py):
+        """Map window pixel to server screen coordinate."""
+        if not screen or not server_w or not server_h:
+            return px, py
+        win_w, win_h = screen.get_size()
+        return (px * server_w / win_w, py * server_h / win_h)
 
     def on_status(msg):
         click.echo(f"  {msg}")
 
     def on_frame(frame):
-        nonlocal frame_surface, screen
+        nonlocal frame_surface, screen, server_w, server_h
         h, w = frame.shape[:2]
+        server_w, server_h = w, h
         if screen is None:
-            if fullscreen:
-                screen = pg.display.set_mode((w, h), pg.FULLSCREEN | pg.SCALED)
-            else:
-                screen = pg.display.set_mode((w, h), pg.RESIZABLE)
-        # Convert BGR to RGB for pygame
-        frame_rgb = frame[..., ::-1]  # BGR -> RGB
+            flags = pg.FULLSCREEN | pg.SCALED if fullscreen else pg.RESIZABLE
+            screen = pg.display.set_mode((w, h), flags)
+        frame_rgb = frame[..., ::-1]
         frame_surface = pg.surfarray.make_surface(frame_rgb.swapaxes(0, 1))
 
     def on_resolution(w, h):
-        nonlocal screen
+        nonlocal screen, server_w, server_h
+        server_w, server_h = w, h
         if screen is None:
-            if fullscreen:
-                screen = pg.display.set_mode((w, h), pg.FULLSCREEN | pg.SCALED)
-            else:
-                screen = pg.display.set_mode((w, h), pg.RESIZABLE)
+            flags = pg.FULLSCREEN | pg.SCALED if fullscreen else pg.RESIZABLE
+            screen = pg.display.set_mode((w, h), flags)
 
     client.on_status = on_status
     client.on_frame = on_frame
@@ -542,40 +571,70 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
         pg.quit()
         sys.exit(1)
 
-    # Input capture via pynput (handled by client)
-    # But we also handle keyboard events in the pygame window
+    click.echo("  Click on the window to send input.")
+    click.echo("  Press Ctrl+Q to quit, ESC to close.")
 
     try:
         while running and client.state.connected:
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     running = False
+
+                elif event.type == pg.WINDOWFOCUSGAINED:
+                    window_active = True
+                elif event.type == pg.WINDOWFOCUSLOST:
+                    window_active = False
+
                 elif event.type == pg.KEYDOWN:
                     if event.key == pg.K_ESCAPE:
                         running = False
-                    elif event.key == pg.K_f:
-                        if screen:
-                            pg.display.toggle_fullscreen()
-                    elif event.key == pg.K_q and \
-                            (event.mod & pg.KMOD_CTRL):
+                    elif event.key == pg.K_f and screen:
+                        pg.display.toggle_fullscreen()
+                    elif event.key == pg.K_q and (event.mod & pg.KMOD_CTRL):
                         running = False
+                    elif window_active:
+                        keysym, keycode = _pygame_keysym(event.key)
+                        if keysym:
+                            client.send_input(MsgType.KEY_EVENT,
+                                              encode_key_event(keysym, keycode, True))
 
-            if frame_surface:
-                # Scale to fit window
-                if screen:
-                    win_w, win_h = screen.get_size()
-                    surf_w, surf_h = frame_surface.get_size()
-                    scale = min(win_w / surf_w, win_h / surf_h)
-                    new_w = int(surf_w * scale)
-                    new_h = int(surf_h * scale)
-                    scaled = pg.transform.smoothscale(
-                        frame_surface, (new_w, new_h)
-                    )
-                    screen.fill((0, 0, 0))
-                    x = (win_w - new_w) // 2
-                    y = (win_h - new_h) // 2
-                    screen.blit(scaled, (x, y))
-                    pg.display.flip()
+                elif event.type == pg.KEYUP:
+                    if window_active:
+                        keysym, keycode = _pygame_keysym(event.key)
+                        if keysym:
+                            client.send_input(MsgType.KEY_EVENT,
+                                              encode_key_event(keysym, keycode, False))
+
+                elif event.type == pg.MOUSEMOTION:
+                    if window_active:
+                        sx, sy = _scale_coords(*event.pos)
+                        client.send_input(MsgType.POINTER_MOVE,
+                                          encode_pointer_move(sx, sy))
+
+                elif event.type == pg.MOUSEBUTTONDOWN:
+                    if window_active:
+                        btn = _BTN_MAP.get(event.button, 1)
+                        sx, sy = _scale_coords(*event.pos)
+                        client.send_input(MsgType.POINTER_BUTTON,
+                                          encode_pointer_button(btn, True, sx, sy))
+
+                elif event.type == pg.MOUSEBUTTONUP:
+                    if window_active:
+                        btn = _BTN_MAP.get(event.button, 1)
+                        sx, sy = _scale_coords(*event.pos)
+                        client.send_input(MsgType.POINTER_BUTTON,
+                                          encode_pointer_button(btn, False, sx, sy))
+
+            if frame_surface and screen:
+                win_w, win_h = screen.get_size()
+                surf_w, surf_h = frame_surface.get_size()
+                scale = min(win_w / surf_w, win_h / surf_h)
+                new_w = int(surf_w * scale)
+                new_h = int(surf_h * scale)
+                scaled = pg.transform.smoothscale(frame_surface, (new_w, new_h))
+                screen.fill((0, 0, 0))
+                screen.blit(scaled, ((win_w - new_w) // 2, (win_h - new_h) // 2))
+                pg.display.flip()
 
             clock.tick(60)
 
@@ -609,6 +668,10 @@ def _run_client_opencv(host: str, port: int, quality: int = 80,
     if not client.connect():
         click.echo("  Connection failed", err=True)
         sys.exit(1)
+
+    click.echo("  (OpenCV display only -- no input. Use 'deskctrl gui' or")
+    click.echo("   install pygame for mouse/keyboard control)")
+    click.echo("  ESC to close, F to toggle fullscreen")
 
     try:
         while client.state.connected:
