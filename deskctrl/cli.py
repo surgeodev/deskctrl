@@ -669,7 +669,7 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
         click.echo(f"  Requested monitor {monitor}")
 
     click.echo("  Click on the window to send input.")
-    click.echo("  All keys forwarded. ESC or Alt+F4 to close.")
+    click.echo("  All keys forwarded. Alt+F4 to close.")
 
     try:
         while running and client.state.connected:
@@ -683,10 +683,8 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
                     window_active = False
 
                 elif event.type == pg.KEYDOWN:
-                    # Local window controls: ESC and Alt+F4 close
-                    if event.key == pg.K_ESCAPE or (
-                        event.key == pg.K_F4 and (event.mod & pg.KMOD_ALT)
-                    ):
+                    # Only Alt+F4 closes the window locally
+                    if event.key == pg.K_F4 and (event.mod & pg.KMOD_ALT):
                         running = False
                     elif window_active:
                         keysym, keycode = _pygame_keysym(event.key)
@@ -867,7 +865,7 @@ def _run_extended_video(host, port, direction, quality, fps, monitor=None):
 
     click.echo(f"  Extended display -- {host}:{port} [{direction}]")
     click.echo(f"  Fullscreen {disp_w}x{disp_h}")
-    click.echo("  Move mouse in/out freely. ESC to close.")
+    click.echo("  Move mouse in/out freely. Alt+F4 to close.")
 
     if not client.connect():
         pg.quit()
@@ -884,9 +882,8 @@ def _run_extended_video(host, port, direction, quality, fps, monitor=None):
                 if event.type == pg.QUIT:
                     running = False
                 elif event.type == pg.KEYDOWN:
-                    if event.key == pg.K_ESCAPE or (
-                        event.key == pg.K_F4 and (event.mod & pg.KMOD_ALT)
-                    ):
+                    # Only Alt+F4 closes the window locally
+                    if event.key == pg.K_F4 and (event.mod & pg.KMOD_ALT):
                         running = False
                     elif input_active:
                         keysym, keycode = _pygame_keysym(event.key)
