@@ -197,9 +197,13 @@ jobs:
             ```
 
             ### New in this release
-            - Seamless Monitor Control mode (Barrier-like)
-            - Wayland support framework
-            - Multi-platform binaries
-            - `deskctrl update` command
-            - Windows InnoSetup installer
+            - `deskctrl extend HOST:PORT` — extended display mode (side panel, no grab)
+            - `deskctrl serve --monitor N` — capture a specific monitor (e.g. virtual display)
+            - `deskctrl serve --virtual` — auto-create virtual monitor (Windows)
+            - `deskctrl driver` — subcommands to install/manage virtual display driver
+            - Server detects monitor-mode clients, skips video streaming
+            - Fix: monitor mode no longer blocks on TCP buffer fill
+            - Fix: KEYUP sends local keys to server (local key filter)
+            - Fix: fullscreen toggle changed to Alt+F (plain F sent to remote)
+            - Module-level pygame key helpers shared between display modes
           files: release-files/*

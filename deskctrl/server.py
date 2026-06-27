@@ -424,11 +424,16 @@ class DeskctrlServer:
             if not data:
                 raise ConnectionError("No handshake response")
             msg_type, length = decode_header(data)
+            monitor_mode = False
             if msg_type == MsgType.HELLO_ACK:
                 payload = self._recv_exact(client, length)
                 if payload:
                     info = decode_hello(payload)
-                    self._emit_status(f"Client version: {info.get('version', '?')}")
+                    client_ver = info.get('version', '?')
+                    monitor_mode = "-monitor" in client_ver
+                    self._emit_status(f"Client version: {client_ver}")
+                    if monitor_mode:
+                        self._emit_status("Monitor mode: skipping video stream")
             else:
                 self._emit_status(f"Unexpected handshake message: {msg_type}")
                 return
@@ -438,12 +443,13 @@ class DeskctrlServer:
                 res_payload = encode_resolution(self._capture.width, self._capture.height)
                 client.sendall(encode_msg(MsgType.RESOLUTION, res_payload))
 
-            # Start streaming
+            # Start streaming (skip for monitor-mode clients)
             self._streaming = True
-            self._stream_thread = threading.Thread(
-                target=self._stream_loop, args=(client,), daemon=True
-            )
-            self._stream_thread.start()
+            if not monitor_mode:
+                self._stream_thread = threading.Thread(
+                    target=self._stream_loop, args=(client,), daemon=True
+                )
+                self._stream_thread.start()
 
             # Start keepalive
             self._keepalive_thread = threading.Thread(

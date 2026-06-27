@@ -18,6 +18,7 @@ from typing import Optional
 import click
 
 from . import __version__, __appname__
+from .platform import IS_WINDOWS
 
 # Configure logging
 logging.basicConfig(
@@ -63,16 +64,22 @@ def cli():
 @click.option("--fps", default=30, help="Target frames per second", type=int)
 @click.option("--quality", default=80, help="JPEG quality 1-100", type=int,
               show_default=True)
-@click.option("--monitor", default=1, help="Monitor index to capture",
+@click.option("--monitor", default=1, help="Monitor index to capture (2+ for extended)",
               type=int, show_default=True)
+@click.option("--virtual", is_flag=True, default=False,
+              help="Auto-create a virtual monitor on Windows (requires admin)")
 @click.option("--nowindow", is_flag=True, default=False,
               help="Don't show local preview window (like scrcpy --nowindow)")
 @click.option("--discovery/--no-discovery", default=True,
               help="Advertise server via mDNS (LAN auto-discovery)")
-def serve(host, port, fps, quality, monitor, nowindow, discovery):
+def serve(host, port, fps, quality, monitor, virtual, nowindow, discovery):
     """Start deskctrl SERVER (the machine being controlled).
 
     Captures the screen and streams it to connected clients.
+
+    Use --monitor 2 to capture a second monitor (e.g. virtual display
+    for extended mode). Use --virtual to auto-create a virtual monitor
+    (Windows only, requires admin).
     """
     # Import here so CLI stays fast even without gui deps
     from .server import DeskctrlServer
@@ -92,6 +99,18 @@ def serve(host, port, fps, quality, monitor, nowindow, discovery):
             discovery_service.start()
         except Exception as e:
             log.warning(f"Discovery not available: {e}")
+
+    # Virtual monitor setup (Windows only)
+    if virtual:
+        if not IS_WINDOWS:
+            click.echo("  --virtual is only supported on Windows", err=True)
+            sys.exit(1)
+        from .virtual_display import install_and_add
+        click.echo("  Setting up virtual monitor (admin required)...")
+        if not install_and_add():
+            click.echo("  Virtual monitor setup failed. Run 'deskctrl driver install' manually.", err=True)
+            sys.exit(1)
+        click.echo(f"  Virtual monitor ready. Capturing monitor {monitor}.")
 
     def on_status(msg):
         click.echo(f"  {msg}")
@@ -477,6 +496,40 @@ def monitor(config, add, remove, no_start, list_only, margin):
         sys.exit(1)
 
 
+# ---- Module-level helpers for pygame display modes --------------------------
+
+_PG_BTN_MAP = {1: 1, 2: 3, 3: 2, 4: 4, 5: 5}  # pygame -> deskctrl button
+
+_PG_SPECIAL = {
+    # (keycode, name): keysym
+    8: 0xFF08, 9: 0xFF09, 13: 0xFF0D, 27: 0xFF1B,
+    36: 0xFF50, 35: 0xFF57, 37: 0xFF51, 39: 0xFF53,
+    38: 0xFF52, 40: 0xFF54, 33: 0xFF55, 34: 0xFF56,
+    127: 0xFFFF, 16: 0xFFE1, 304: 0xFFE1, 303: 0xFFE2,
+    306: 0xFFE3, 305: 0xFFE4, 301: 0xFFE5, 308: 0xFFE7,
+    307: 0xFFE8, 310: 0xFFEB, 309: 0xFFEC, 32: 0x0020,
+}
+# Function keys F1-F12
+for i in range(12):
+    _PG_SPECIAL[282 + i] = 0xFFBE + i
+
+
+def _pygame_keysym(key) -> tuple:
+    """Convert pygame key integer to (keysym, keycode)."""
+    if 32 <= key <= 126:
+        return key, 0
+    keysym = _PG_SPECIAL.get(key, 0)
+    return keysym, 0
+
+
+def _is_local_key(key, mod) -> bool:
+    """Check if a key combo should be handled locally (not sent to remote)."""
+    import pygame as pg
+    return (key == pg.K_ESCAPE or
+            (key == pg.K_q and (mod & pg.KMOD_CTRL)) or
+            (key == pg.K_f and (mod & pg.KMOD_ALT)))
+
+
 # ???????????????????????????????????????????????????????????????????????????
 # Shared client runner (for connect command)
 # ???????????????????????????????????????????????????????????????????????????
@@ -528,35 +581,6 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
     server_w = 0
     server_h = 0
     window_active = True  # input only sent when window is focused
-
-    # pygame button -> deskctrl button (1=left, 2=middle, 3=right, 4=x1, 5=x2)
-    _BTN_MAP = {1: 1, 2: 3, 3: 2, 4: 4, 5: 5}
-
-    # Keys that are handled locally (never sent to server)
-    def _is_local_key(key, mod) -> bool:
-        return (key == pg.K_ESCAPE or
-                (key == pg.K_q and (mod & pg.KMOD_CTRL)) or
-                (key == pg.K_f and (mod & pg.KMOD_ALT)))
-
-    def _pygame_keysym(key) -> tuple:
-        """Convert pygame key to (keysym, keycode)."""
-        if 32 <= key <= 126:
-            return key, 0
-        _SPECIAL = {
-            pg.K_BACKSPACE: 0xFF08, pg.K_TAB: 0xFF09, pg.K_RETURN: 0xFF0D,
-            pg.K_ESCAPE: 0xFF1B, pg.K_HOME: 0xFF50, pg.K_END: 0xFF57,
-            pg.K_LEFT: 0xFF51, pg.K_RIGHT: 0xFF53, pg.K_UP: 0xFF52,
-            pg.K_DOWN: 0xFF54, pg.K_PAGEUP: 0xFF55, pg.K_PAGEDOWN: 0xFF56,
-            pg.K_DELETE: 0xFFFF, pg.K_LSHIFT: 0xFFE1, pg.K_RSHIFT: 0xFFE2,
-            pg.K_LCTRL: 0xFFE3, pg.K_RCTRL: 0xFFE4, pg.K_CAPSLOCK: 0xFFE5,
-            pg.K_LALT: 0xFFE7, pg.K_RALT: 0xFFE8, pg.K_LMETA: 0xFFEB,
-            pg.K_RMETA: 0xFFEC, pg.K_SPACE: 0x0020,
-            pg.K_F1: 0xFFBE, pg.K_F2: 0xFFBF, pg.K_F3: 0xFFC0,
-            pg.K_F4: 0xFFC1, pg.K_F5: 0xFFC2, pg.K_F6: 0xFFC3,
-            pg.K_F7: 0xFFC4, pg.K_F8: 0xFFC5, pg.K_F9: 0xFFC6,
-            pg.K_F10: 0xFFC7, pg.K_F11: 0xFFC8, pg.K_F12: 0xFFC9,
-        }
-        return (_SPECIAL[key], 0) if key in _SPECIAL else (key, 0)
 
     def _scale_coords(px, py):
         """Map window pixel to server screen coordinate."""
@@ -639,14 +663,14 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
 
                 elif event.type == pg.MOUSEBUTTONDOWN:
                     if window_active:
-                        btn = _BTN_MAP.get(event.button, 1)
+                        btn = _PG_BTN_MAP.get(event.button, 1)
                         sx, sy = _scale_coords(*event.pos)
                         client.send_input(MsgType.POINTER_BUTTON,
                                           encode_pointer_button(btn, True, sx, sy))
 
                 elif event.type == pg.MOUSEBUTTONUP:
                     if window_active:
-                        btn = _BTN_MAP.get(event.button, 1)
+                        btn = _PG_BTN_MAP.get(event.button, 1)
                         sx, sy = _scale_coords(*event.pos)
                         client.send_input(MsgType.POINTER_BUTTON,
                                           encode_pointer_button(btn, False, sx, sy))
@@ -721,6 +745,261 @@ def _run_client_opencv(host: str, port: int, quality: int = 80,
         cv2.destroyAllWindows()
         client.disconnect()
         click.echo("  Disconnected")
+
+
+# ???????????????????????????????????????????????????????????????????????????
+# extend (extended display mode)
+# ???????????????????????????????????????????????????????????????????????????
+
+_BACK_EDGE = {"right": "left", "left": "right", "top": "bottom", "bottom": "top"}
+
+
+def _build_extend_client(host, port, on_frame, on_resolution, on_status):
+    """Create a DeskctrlClient in display-less mode for extended display."""
+    from .client import DeskctrlClient, DISPLAY_NONE
+    client = DeskctrlClient(host=host, port=port, display_mode=DISPLAY_NONE)
+    client.on_frame = on_frame
+    client.on_resolution = on_resolution
+    client.on_status = on_status
+    return client
+
+
+def _run_extended_video(host, port, direction, quality, fps, loc_left, loc_top, loc_w, loc_h):
+    """Side-panel window showing remote desktop, no grab — mouse in/out freely."""
+    import os
+    import pygame as pg
+
+    from .protocol import (
+        MsgType, encode_pointer_move, encode_pointer_button,
+        encode_key_event, encode_scroll,
+    )
+
+    # Window geometry: side panel, full height, half screen width
+    win_w = loc_w // 2
+    win_h = loc_h
+    if direction == "right":
+        win_x = loc_w - win_w
+    else:
+        win_x = 0  # direction left
+
+    os.environ["SDL_VIDEO_WINDOW_POS"] = f"{win_x},{loc_top}"
+
+    pg.init()
+    pg.display.set_caption(f"Extended -- {host}:{port}")
+    screen = pg.display.set_mode((win_w, win_h), pg.NOFRAME)
+    pg.event.set_grab(False)
+    pg.mouse.set_visible(True)
+
+    clock = pg.time.Clock()
+    running = True
+    frame_surface = None
+    server_w, server_h = 0, 0
+    input_active = False  # only send input when mouse is inside
+
+    def on_status(msg):
+        click.echo(f"  {msg}")
+
+    def on_frame(frame):
+        nonlocal frame_surface, server_w, server_h
+        h, w = frame.shape[:2]
+        server_w, server_h = w, h
+        frame_rgb = frame[..., ::-1]
+        frame_surface = pg.surfarray.make_surface(frame_rgb.swapaxes(0, 1))
+
+    def on_resolution(w, h):
+        nonlocal server_w, server_h
+        server_w, server_h = w, h
+
+    client = _build_extend_client(host, port, on_frame, on_resolution, on_status)
+
+    def _scale(px, py):
+        if not server_w or not server_h:
+            return px, py
+        return (px * server_w / win_w, py * server_h / win_h)
+
+    click.echo(f"  Extended display -- {host}:{port} [{direction}]")
+    click.echo(f"  Window: {win_w}x{win_h} at ({win_x}, {loc_top})")
+    click.echo("  Move mouse in/out freely. ESC to close.")
+
+    if not client.connect():
+        pg.quit()
+        return
+
+    try:
+        while running and client.state.connected:
+            for event in pg.event.get():
+                if event.type == pg.QUIT:
+                    running = False
+                elif event.type == pg.KEYDOWN:
+                    if event.key == pg.K_ESCAPE:
+                        running = False
+                    elif input_active:
+                        keysym = _pygame_keysym(event.key)
+                        if keysym:
+                            client.send_input(MsgType.KEY_EVENT,
+                                              encode_key_event(*keysym, True))
+                elif event.type == pg.KEYUP:
+                    if input_active:
+                        keysym = _pygame_keysym(event.key)
+                        if keysym:
+                            client.send_input(MsgType.KEY_EVENT,
+                                              encode_key_event(*keysym, False))
+
+                elif event.type == pg.MOUSEMOTION:
+                    if input_active:
+                        sx, sy = _scale(*event.pos)
+                        client.send_input(MsgType.POINTER_MOVE,
+                                          encode_pointer_move(sx, sy))
+
+                elif event.type == pg.MOUSEBUTTONDOWN:
+                    if input_active:
+                        btn = _PG_BTN_MAP.get(event.button, 1)
+                        sx, sy = _scale(*event.pos)
+                        client.send_input(MsgType.POINTER_BUTTON,
+                                          encode_pointer_button(btn, True, sx, sy))
+
+                elif event.type == pg.MOUSEBUTTONUP:
+                    if input_active:
+                        btn = _PG_BTN_MAP.get(event.button, 1)
+                        sx, sy = _scale(*event.pos)
+                        client.send_input(MsgType.POINTER_BUTTON,
+                                          encode_pointer_button(btn, False, sx, sy))
+
+                elif event.type == pg.MOUSEWHEEL:
+                    if input_active:
+                        client.send_input(MsgType.SCROLL,
+                                          encode_scroll(event.x, event.y))
+
+            # Mouse in window → send input. Mouse out → stop.
+            input_active = pg.mouse.get_focused()
+
+            # Render frame
+            if frame_surface and screen:
+                surf_w, surf_h = frame_surface.get_size()
+                scale = min(win_w / surf_w, win_h / surf_h)
+                new_w = int(surf_w * scale)
+                new_h = int(surf_h * scale)
+                scaled = pg.transform.scale(frame_surface, (new_w, new_h))
+                ox = (win_w - new_w) // 2
+                oy = (win_h - new_h) // 2
+                screen.fill((0, 0, 0))
+                screen.blit(scaled, (ox, oy))
+                pg.display.flip()
+            else:
+                pg.time.wait(16)
+
+            clock.tick(60)
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        client.disconnect()
+        pg.quit()
+        click.echo("  Extended display closed")
+
+
+# ???????????????????????????????????????????????????????????????????????????
+# extend command
+# ???????????????????????????????????????????????????????????????????????????
+
+@cli.command()
+@click.argument("host_port", required=True)
+@click.option("--direction", "-d", default="right",
+              type=click.Choice(["left", "right", "top", "bottom"]),
+              help="Direction of this extended display (back edge = opposite)")
+def extend(host_port, direction):
+    """Open a fullscreen remote desktop window (extended display).
+
+    Shows the remote desktop in fullscreen. Move the mouse to the
+    opposite edge (or press ESC) to return to the local desktop.
+
+    \b
+    Examples:
+        deskctrl extend 192.168.1.10:5830
+        deskctrl extend 192.168.1.10:5830 --direction right
+    """
+    host, port = _parse_host_port(host_port.strip())
+    if host is None:
+        sys.exit(1)
+
+    # Get screen geometry via tkinter (always available with Python)
+    import tkinter as tk
+    tk_root = tk.Tk()
+    tk_root.withdraw()
+    loc_w = tk_root.winfo_screenwidth()
+    loc_h = tk_root.winfo_screenheight()
+    tk_root.destroy()
+
+    _run_extended_video(host, port, direction, 80, 30,
+                        0, 0, loc_w, loc_h)
+
+
+# ???????????????????????????????????????????????????????????????????????????
+# driver (virtual display driver management)
+# ???????????????????????????????????????????????????????????????????????????
+
+@cli.group()
+def driver():
+    """Manage virtual display drivers (Windows only).
+
+    Creates a virtual monitor so the OS sees an additional display.
+    The deskctrl server can capture it with --monitor 2.
+    """
+
+
+@driver.command("status")
+def driver_status():
+    """Show virtual display driver status."""
+    from .virtual_display import status_text
+    click.echo(status_text())
+
+
+@driver.command("install")
+@click.option("--force", is_flag=True, help="Re-download even if cached")
+def driver_install(force):
+    """Download and install the virtual display driver (admin required)."""
+    from .virtual_display import download, install
+    click.echo("  Downloading usbmmidd virtual display driver...")
+    ok = download(force=force) is not None
+    if not ok:
+        click.echo("  Download failed", err=True)
+        sys.exit(1)
+    click.echo("  Installing driver (admin elevation may be needed)...")
+    if install():
+        click.echo("  Driver installed. Now run 'deskctrl driver add-monitor'")
+    else:
+        click.echo("  Install failed. Try running as Administrator.", err=True)
+        sys.exit(1)
+
+
+@driver.command("add-monitor")
+def driver_add():
+    """Add a virtual monitor (after driver is installed)."""
+    from .virtual_display import add_monitor
+    click.echo("  Adding virtual monitor...")
+    if add_monitor():
+        click.echo("  Virtual monitor added!")
+        click.echo("  Go to Windows Display Settings and set Extend mode.")
+        click.echo("  Then run: deskctrl serve --monitor 2")
+    else:
+        click.echo("  Failed to add monitor", err=True)
+        sys.exit(1)
+
+
+@driver.command("remove-monitor")
+def driver_remove():
+    """Remove all virtual monitors."""
+    from .virtual_display import remove_monitor
+    click.echo("  Removing virtual monitors...")
+    remove_monitor()
+
+
+@driver.command("uninstall")
+def driver_uninstall():
+    """Uninstall the virtual display driver."""
+    from .virtual_display import uninstall
+    click.echo("  Uninstalling driver...")
+    uninstall()
 
 
 # ???????????????????????????????????????????????????????????????????????????
