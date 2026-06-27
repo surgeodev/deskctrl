@@ -161,7 +161,9 @@ def serve(host, port, fps, quality, monitor, virtual, nowindow, discovery):
 @click.option("--fps", default=30, help="Request target FPS", type=int)
 @click.option("--fullscreen", is_flag=True, default=False,
               help="Start in fullscreen mode")
-def connect(host, port, auto, quality, fps, fullscreen):
+@click.option("--monitor", type=int, default=None,
+              help="Switch server to this monitor index (0 = primary)")
+def connect(host, port, auto, quality, fps, fullscreen, monitor):
     """Connect to a deskctrl SERVER as a client (with display).
 
     Required: HOST (IP address or hostname of the deskctrl server).
@@ -185,7 +187,7 @@ def connect(host, port, auto, quality, fps, fullscreen):
         if parsed_port is not None:
             port = parsed_port
 
-    _run_client(host, port, quality, fps, fullscreen)
+    _run_client(host, port, quality, fps, fullscreen, monitor)
 
 
 # ???????????????????????????????????????????????????????????????????????????
@@ -501,17 +503,40 @@ def monitor(config, add, remove, no_start, list_only, margin):
 _PG_BTN_MAP = {1: 1, 2: 3, 3: 2, 4: 4, 5: 5}  # pygame -> deskctrl button
 
 _PG_SPECIAL = {
-    # (keycode, name): keysym
-    8: 0xFF08, 9: 0xFF09, 13: 0xFF0D, 27: 0xFF1B,
-    36: 0xFF50, 35: 0xFF57, 37: 0xFF51, 39: 0xFF53,
-    38: 0xFF52, 40: 0xFF54, 33: 0xFF55, 34: 0xFF56,
-    127: 0xFFFF, 16: 0xFFE1, 304: 0xFFE1, 303: 0xFFE2,
-    306: 0xFFE3, 305: 0xFFE4, 301: 0xFFE5, 308: 0xFFE7,
-    307: 0xFFE8, 310: 0xFFEB, 309: 0xFFEC, 32: 0x0020,
+    # (pygame keycode): X11 keysym
+    8: 0xFF08, 9: 0xFF09, 13: 0xFF0D, 27: 0xFF1B,  # Backspace, Tab, Enter, Esc
+    36: 0xFF50, 35: 0xFF57,  # Home, End
+    37: 0xFF51, 39: 0xFF53, 38: 0xFF52, 40: 0xFF54,  # Left, Right, Up, Down
+    33: 0xFF55, 34: 0xFF56,  # PageUp, PageDown
+    127: 0xFFFF,  # Delete
+    277: 0xFF63,  # Insert
+    316: 0xFF61,  # Print Screen
+    302: 0xFF14,  # Scroll Lock
+    19: 0xFF13,   # Pause
+    300: 0xFF7F,  # Num Lock
+    16: 0xFFE1, 304: 0xFFE1, 303: 0xFFE2,  # Shift (L, R)
+    306: 0xFFE3, 305: 0xFFE4,  # Ctrl (L, R)
+    301: 0xFFE5,  # Caps Lock
+    308: 0xFFE9, 307: 0xFFEA,  # Alt (L, R)  — was 0xFFE7/0xFFE8 (Meta)
+    311: 0xFFEB,  # Super/Windows (L)
+    312: 0xFFEC,  # Super/Windows (R)
+    310: 0xFFEB, 309: 0xFFEC,  # Meta (L, R) — same as Super
+    319: 0xFF67,  # Menu
+    32: 0x0020,  # Space
 }
 # Function keys F1-F12
 for i in range(12):
     _PG_SPECIAL[282 + i] = 0xFFBE + i
+# Keypad
+for i in range(10):
+    _PG_SPECIAL[256 + i] = 0xFFB0 + i  # KP_0–KP_9
+_PG_SPECIAL[266] = 0xFFAE  # KP_Period
+_PG_SPECIAL[267] = 0xFFAF  # KP_Divide
+_PG_SPECIAL[268] = 0xFFAA  # KP_Multiply
+_PG_SPECIAL[269] = 0xFFAD  # KP_Minus
+_PG_SPECIAL[270] = 0xFFAB  # KP_Plus
+_PG_SPECIAL[271] = 0xFF8D  # KP_Enter
+_PG_SPECIAL[272] = 0xFFBD  # KP_Equals
 
 
 def _pygame_keysym(key) -> tuple:
@@ -523,11 +548,13 @@ def _pygame_keysym(key) -> tuple:
 
 
 def _is_local_key(key, mod) -> bool:
-    """Check if a key combo should be handled locally (not sent to remote)."""
+    """Check if a key combo should be handled locally (not sent to remote).
+
+    Only Alt+F4 is intercepted locally (close window on Windows).
+    All other keys go to the remote.
+    """
     import pygame as pg
-    return (key == pg.K_ESCAPE or
-            (key == pg.K_q and (mod & pg.KMOD_CTRL)) or
-            (key == pg.K_f and (mod & pg.KMOD_ALT)))
+    return key == pg.K_F4 and (mod & pg.KMOD_ALT)
 
 
 # ???????????????????????????????????????????????????????????????????????????
@@ -535,18 +562,19 @@ def _is_local_key(key, mod) -> bool:
 # ???????????????????????????????????????????????????????????????????????????
 
 def _run_client(host: str, port: int, quality: int = 80,
-                fps: int = 30, fullscreen: bool = False):
+                fps: int = 30, fullscreen: bool = False,
+                monitor: int = None):
     """Run client with pygame or OpenCV display."""
     # Try pygame first (lower latency)
     try:
-        _run_client_pygame(host, port, quality, fps, fullscreen)
+        _run_client_pygame(host, port, quality, fps, fullscreen, monitor)
         return
     except ImportError:
         pass
 
     # Fallback to OpenCV display
     try:
-        _run_client_opencv(host, port, quality, fps, fullscreen)
+        _run_client_opencv(host, port, quality, fps, fullscreen, monitor)
         return
     except Exception as e:
         click.echo(f"  Display not available: {e}")
@@ -556,7 +584,8 @@ def _run_client(host: str, port: int, quality: int = 80,
 
 
 def _run_client_pygame(host: str, port: int, quality: int = 80,
-                       fps: int = 30, fullscreen: bool = False):
+                       fps: int = 30, fullscreen: bool = False,
+                       monitor: int = None):
     """Client display using pygame with integrated mouse/keyboard input."""
     import pygame as pg
 
@@ -564,7 +593,7 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
     from .protocol import (
         MsgType,
         encode_pointer_move, encode_pointer_button,
-        encode_key_event, encode_scroll,
+        encode_key_event, encode_scroll, encode_settings,
     )
 
     pg.init()
@@ -621,8 +650,13 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
         pg.quit()
         sys.exit(1)
 
+    # Request monitor switch if specified
+    if monitor is not None:
+        client.send_input(MsgType.SETTINGS, encode_settings(monitor=monitor))
+        click.echo(f"  Requested monitor {monitor}")
+
     click.echo("  Click on the window to send input.")
-    click.echo("  Press Ctrl+Q to quit, ESC to close, Alt+F for fullscreen.")
+    click.echo("  All keys forwarded. ESC or Alt+F4 to close.")
 
     try:
         while running and client.state.connected:
@@ -636,11 +670,10 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
                     window_active = False
 
                 elif event.type == pg.KEYDOWN:
-                    if event.key == pg.K_ESCAPE:
-                        running = False
-                    elif event.key == pg.K_f and (event.mod & pg.KMOD_ALT) and screen:
-                        pg.display.toggle_fullscreen()
-                    elif event.key == pg.K_q and (event.mod & pg.KMOD_CTRL):
+                    # Local window controls: ESC and Alt+F4 close
+                    if event.key == pg.K_ESCAPE or (
+                        event.key == pg.K_F4 and (event.mod & pg.KMOD_ALT)
+                    ):
                         running = False
                     elif window_active:
                         keysym, keycode = _pygame_keysym(event.key)
@@ -649,7 +682,7 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
                                               encode_key_event(keysym, keycode, True))
 
                 elif event.type == pg.KEYUP:
-                    if window_active and not _is_local_key(event.key, event.mod):
+                    if window_active:
                         keysym, keycode = _pygame_keysym(event.key)
                         if keysym:
                             client.send_input(MsgType.KEY_EVENT,
@@ -697,7 +730,8 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
 
 
 def _run_client_opencv(host: str, port: int, quality: int = 80,
-                       fps: int = 30, fullscreen: bool = False):
+                       fps: int = 30, fullscreen: bool = False,
+                       monitor: int = None):
     """Fallback client display using OpenCV window."""
     import cv2
     from .client import DeskctrlClient, DISPLAY_NONE
@@ -718,6 +752,12 @@ def _run_client_opencv(host: str, port: int, quality: int = 80,
     if not client.connect():
         click.echo("  Connection failed", err=True)
         sys.exit(1)
+
+    # Request monitor switch if specified
+    if monitor is not None:
+        from .protocol import MsgType, encode_settings
+        client.send_input(MsgType.SETTINGS, encode_settings(monitor=monitor))
+        click.echo(f"  Requested monitor {monitor}")
 
     click.echo("  (OpenCV display only -- no input. Use 'deskctrl gui' or")
     click.echo("   install pygame for mouse/keyboard control)")
@@ -764,13 +804,13 @@ def _build_extend_client(host, port, on_frame, on_resolution, on_status):
     return client
 
 
-def _run_extended_video(host, port, direction, quality, fps):
+def _run_extended_video(host, port, direction, quality, fps, monitor=None):
     """Fullscreen remote desktop window — mouse in/out freely."""
     import pygame as pg
 
     from .protocol import (
         MsgType, encode_pointer_move, encode_pointer_button,
-        encode_key_event, encode_scroll,
+        encode_key_event, encode_scroll, encode_settings,
     )
 
     pg.init()
@@ -818,13 +858,20 @@ def _run_extended_video(host, port, direction, quality, fps):
         pg.quit()
         return
 
+    # Request monitor switch if specified
+    if monitor is not None:
+        client.send_input(MsgType.SETTINGS, encode_settings(monitor=monitor))
+        click.echo(f"  Requested monitor {monitor}")
+
     try:
         while running and client.state.connected:
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     running = False
                 elif event.type == pg.KEYDOWN:
-                    if event.key == pg.K_ESCAPE:
+                    if event.key == pg.K_ESCAPE or (
+                        event.key == pg.K_F4 and (event.mod & pg.KMOD_ALT)
+                    ):
                         running = False
                     elif input_active:
                         keysym = _pygame_keysym(event.key)
@@ -900,7 +947,9 @@ def _run_extended_video(host, port, direction, quality, fps):
 @click.option("--direction", "-d", default="right",
               type=click.Choice(["left", "right", "top", "bottom"]),
               help="Direction of this extended display (back edge = opposite)")
-def extend(host_port, direction):
+@click.option("--monitor", type=int, default=None,
+              help="Request server to capture this monitor index")
+def extend(host_port, direction, monitor):
     """Open a fullscreen remote desktop window (extended display).
 
     Shows the remote desktop in fullscreen. Move the mouse to the
@@ -910,12 +959,13 @@ def extend(host_port, direction):
     Examples:
         deskctrl extend 192.168.1.10:5830
         deskctrl extend 192.168.1.10:5830 --direction right
+        deskctrl extend 192.168.1.10:5830 --monitor 2
     """
     host, port = _parse_host_port(host_port.strip())
     if host is None:
         sys.exit(1)
 
-    _run_extended_video(host, port, direction, 80, 30)
+    _run_extended_video(host, port, direction, 80, 30, monitor)
 
 
 # ???????????????????????????????????????????????????????????????????????????
