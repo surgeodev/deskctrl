@@ -774,8 +774,11 @@ def _run_extended_video(host, port, direction, quality, fps, loc_left, loc_top, 
     )
 
     pg.init()
+    # Get display info for proper sizing
+    info = pg.display.Info()
+    disp_w, disp_h = info.current_w, info.current_h
     pg.display.set_caption(f"Extended -- {host}:{port}")
-    screen = pg.display.set_mode((0, 0), pg.FULLSCREEN | pg.SCALED)
+    screen = pg.display.set_mode((disp_w, disp_h), pg.FULLSCREEN | pg.SCALED)
     pg.event.set_grab(False)
     pg.mouse.set_visible(True)
     win_w, win_h = screen.get_size()
