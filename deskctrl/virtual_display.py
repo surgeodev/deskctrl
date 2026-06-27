@@ -13,7 +13,6 @@ import json
 import shutil
 import logging
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Optional
 from urllib.request import urlopen
@@ -32,55 +31,6 @@ USBMIMM_URL = (
 def _ensure_windows():
     if not IS_WINDOWS:
         raise RuntimeError("Virtual display driver is Windows-only")
-
-
-def _is_admin() -> bool:
-    """Return True if running with elevated admin privileges on Windows.
-
-    Checks token elevation (works with UAC). Falls back to trying a
-    simple admin-only operation if the API check fails.
-    """
-    if not IS_WINDOWS:
-        return False
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        # Token elevation check (reliable with UAC)
-        TOKEN_QUERY = 0x0008
-        TokenElevation = 20
-
-        h_process = ctypes.windll.kernel32.GetCurrentProcess()
-        h_token = wintypes.HANDLE()
-
-        if not ctypes.windll.advapi32.OpenProcessToken(
-            h_process, TOKEN_QUERY, ctypes.byref(h_token)
-        ):
-            return False
-
-        elevation = wintypes.DWORD()
-        size = wintypes.DWORD(ctypes.sizeof(elevation))
-
-        result = ctypes.windll.advapi32.GetTokenInformation(
-            h_token, TokenElevation,
-            ctypes.byref(elevation), size, ctypes.byref(size),
-        )
-        ctypes.windll.kernel32.CloseHandle(h_token)
-        return result != 0 and elevation.value != 0
-    except Exception:
-        # If the API check fails (e.g. older Windows), try a real operation
-        try:
-            import tempfile, os
-            test_path = os.path.join(
-                os.environ.get("SystemRoot", "C:\\Windows"),
-                "Temp", "__deskctrl_admin_test.tmp"
-            )
-            with open(test_path, "w") as f:
-                f.write("")
-            os.unlink(test_path)
-            return True
-        except (IOError, PermissionError, OSError):
-            return False
 
 
 def _find_in_tree(dirpath: Path, filename: str) -> Optional[Path]:
@@ -146,17 +96,13 @@ def install() -> bool:
     """
     _ensure_windows()
 
-    if not _is_admin():
-        log.error("Administrator privileges required. Run the terminal as Administrator.")
-        return False
-
     dd = download()
     if not dd:
         return False
 
     dd_path = Path(dd)
 
-    log.info("Installing usbmmidd driver (admin required)...")
+    log.info("Installing usbmmidd driver...")
 
     # Search recursively for installer tools in extracted tree
     dev_installer = _find_in_tree(dd_path, "deviceinstaller64.exe")
@@ -170,7 +116,7 @@ def install() -> bool:
                 check=True, capture_output=True, timeout=30,
             )
         except subprocess.CalledProcessError as e:
-            log.error(f"Driver install via deviceinstaller64 failed: {e}")
+            log.error(f"deviceinstaller64 install failed: {e}")
             return False
     elif bat and inf:
         try:
@@ -179,7 +125,7 @@ def install() -> bool:
                 check=True, capture_output=True, timeout=30,
             )
         except subprocess.CalledProcessError as e:
-            log.error(f"Driver install via bat failed: {e}")
+            log.error(f"usbmmidd.bat install failed: {e}")
             return False
     elif inf:
         try:
@@ -188,7 +134,7 @@ def install() -> bool:
                 check=True, capture_output=True, timeout=30,
             )
         except subprocess.CalledProcessError as e:
-            log.error(f"Driver install via pnputil failed (run as Administrator): {e}")
+            log.error(f"pnputil install failed (try running as Administrator): {e}")
             return False
         except FileNotFoundError:
             log.info("pnputil not found. Install driver manually:\n"
@@ -207,10 +153,6 @@ def install() -> bool:
 def uninstall() -> bool:
     """Remove the virtual display driver."""
     _ensure_windows()
-
-    if not _is_admin():
-        log.error("Administrator privileges required. Run the terminal as Administrator.")
-        return False
 
     dd = _driver_dir()
     inf = _find_in_tree(dd, "usbmmidd.inf")
@@ -269,10 +211,6 @@ def add_monitor(count: int = 1) -> bool:
     """
     _ensure_windows()
 
-    if not _is_admin():
-        log.error("Administrator privileges required. Run the terminal as Administrator.")
-        return False
-
     dd = _get_driver_dir()
     inf = _find_in_tree(dd, "usbmmidd.inf") if dd else None
     if not inf:
@@ -314,10 +252,6 @@ def add_monitor(count: int = 1) -> bool:
 def remove_monitor() -> bool:
     """Remove all virtual monitors."""
     _ensure_windows()
-
-    if not _is_admin():
-        log.error("Administrator privileges required. Run the terminal as Administrator.")
-        return False
 
     dd = _get_driver_dir()
     if not dd:

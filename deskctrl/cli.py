@@ -106,7 +106,7 @@ def serve(host, port, fps, quality, monitor, virtual, nowindow, discovery):
             click.echo("  --virtual is only supported on Windows", err=True)
             sys.exit(1)
         from .virtual_display import install_and_add
-        click.echo("  Setting up virtual monitor (admin required)...")
+        click.echo("  Setting up virtual monitor...")
         if not install_and_add():
             click.echo("  Virtual monitor setup failed. Run 'deskctrl driver install' manually.", err=True)
             sys.exit(1)
@@ -991,18 +991,18 @@ def driver_status():
 @driver.command("install")
 @click.option("--force", is_flag=True, help="Re-download even if cached")
 def driver_install(force):
-    """Download and install the virtual display driver (admin required)."""
+    """Download and install the virtual display driver."""
     from .virtual_display import download, install
     click.echo("  Downloading usbmmidd virtual display driver...")
     ok = download(force=force) is not None
     if not ok:
         click.echo("  Download failed", err=True)
         sys.exit(1)
-    click.echo("  Installing driver (admin elevation may be needed)...")
+    click.echo("  Installing driver...")
     if install():
         click.echo("  Driver installed. Now run 'deskctrl driver add-monitor'")
     else:
-        click.echo("  Install failed. Try running as Administrator.", err=True)
+        click.echo("  Install failed. Check the error above.", err=True)
         sys.exit(1)
 
 
