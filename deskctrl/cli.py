@@ -764,7 +764,7 @@ def _build_extend_client(host, port, on_frame, on_resolution, on_status):
     return client
 
 
-def _run_extended_video(host, port, direction, quality, fps, loc_left, loc_top, loc_w, loc_h):
+def _run_extended_video(host, port, direction, quality, fps):
     """Fullscreen remote desktop window — mouse in/out freely."""
     import pygame as pg
 
@@ -811,7 +811,7 @@ def _run_extended_video(host, port, direction, quality, fps, loc_left, loc_top, 
         return (px * server_w / win_w, py * server_h / win_h)
 
     click.echo(f"  Extended display -- {host}:{port} [{direction}]")
-    click.echo(f"  Window: {win_w}x{win_h} at ({win_x}, {loc_top})")
+    click.echo(f"  Fullscreen {disp_w}x{disp_h}")
     click.echo("  Move mouse in/out freely. ESC to close.")
 
     if not client.connect():
@@ -915,16 +915,7 @@ def extend(host_port, direction):
     if host is None:
         sys.exit(1)
 
-    # Get screen geometry via tkinter (always available with Python)
-    import tkinter as tk
-    tk_root = tk.Tk()
-    tk_root.withdraw()
-    loc_w = tk_root.winfo_screenwidth()
-    loc_h = tk_root.winfo_screenheight()
-    tk_root.destroy()
-
-    _run_extended_video(host, port, direction, 80, 30,
-                        0, 0, loc_w, loc_h)
+    _run_extended_video(host, port, direction, 80, 30)
 
 
 # ???????????????????????????????????????????????????????????????????????????
