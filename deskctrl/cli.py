@@ -573,6 +573,7 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
 def _run_client_opencv(host: str, port: int, quality: int = 80,
                        fps: int = 30, fullscreen: bool = False):
     """Fallback client display using OpenCV window."""
+    import cv2
     from .client import DeskctrlClient, DISPLAY_NONE
 
     client = DeskctrlClient(
