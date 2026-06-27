@@ -765,8 +765,7 @@ def _build_extend_client(host, port, on_frame, on_resolution, on_status):
 
 
 def _run_extended_video(host, port, direction, quality, fps, loc_left, loc_top, loc_w, loc_h):
-    """Side-panel window showing remote desktop, no grab — mouse in/out freely."""
-    import os
+    """Fullscreen remote desktop window — mouse in/out freely."""
     import pygame as pg
 
     from .protocol import (
@@ -774,21 +773,12 @@ def _run_extended_video(host, port, direction, quality, fps, loc_left, loc_top, 
         encode_key_event, encode_scroll,
     )
 
-    # Window geometry: side panel, full height, half screen width
-    win_w = loc_w // 2
-    win_h = loc_h
-    if direction == "right":
-        win_x = loc_w - win_w
-    else:
-        win_x = 0  # direction left
-
-    os.environ["SDL_VIDEO_WINDOW_POS"] = f"{win_x},{loc_top}"
-
     pg.init()
     pg.display.set_caption(f"Extended -- {host}:{port}")
-    screen = pg.display.set_mode((win_w, win_h), pg.NOFRAME)
+    screen = pg.display.set_mode((0, 0), pg.FULLSCREEN | pg.SCALED)
     pg.event.set_grab(False)
     pg.mouse.set_visible(True)
+    win_w, win_h = screen.get_size()
 
     clock = pg.time.Clock()
     running = True
