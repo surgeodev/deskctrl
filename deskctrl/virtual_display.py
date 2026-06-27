@@ -24,7 +24,7 @@ from .platform import IS_WINDOWS
 log = logging.getLogger(__name__)
 
 USBMIMM_URL = (
-    "https://github.com/nomi-san/usbmmidd_v2/releases/latest/download/usbmmidd.zip"
+    "https://www.amyuni.com/downloads/usbmmidd_v2.zip"
 )
 
 # ---- helpers ------------------------------------------------------------------
@@ -94,21 +94,40 @@ def install() -> bool:
         return False
 
     log.info("Installing usbmmidd driver (admin required)...")
-    bat = Path(dd) / "usbmmidd.bat"
-    if not bat.exists():
-        log.error(f"usbmmidd.bat not found in {dd}")
-        return False
 
-    try:
-        subprocess.run(
-            ["pnputil", "/add-driver", str(Path(dd) / "usbmmidd.inf"), "/install"],
-            check=True, capture_output=True, timeout=30,
-        )
-    except subprocess.CalledProcessError as e:
-        log.error(f"Driver install failed: {e}")
-        return False
-    except FileNotFoundError:
-        log.info("pnputil not found, you may need to install the driver manually.")
+    # Try deviceinstaller64 first (newer versions), fallback to pnputil
+    dev_installer = Path(dd) / "deviceinstaller64.exe"
+    bat = Path(dd) / "usbmmidd.bat"
+
+    if dev_installer.exists():
+        try:
+            subprocess.run(
+                [str(dev_installer), "install", str(Path(dd) / "usbmmidd.inf"), "usbmmidd"],
+                check=True, capture_output=True, timeout=30,
+            )
+        except subprocess.CalledProcessError as e:
+            log.error(f"Driver install via deviceinstaller64 failed: {e}")
+            return False
+    elif bat.exists():
+        try:
+            subprocess.run(
+                [str(bat), "install"],
+                check=True, capture_output=True, timeout=30,
+            )
+        except subprocess.CalledProcessError as e:
+            log.error(f"Driver install via bat failed: {e}")
+            return False
+    else:
+        try:
+            subprocess.run(
+                ["pnputil", "/add-driver", str(Path(dd) / "usbmmidd.inf"), "/install"],
+                check=True, capture_output=True, timeout=30,
+            )
+        except subprocess.CalledProcessError as e:
+            log.error(f"Driver install via pnputil failed: {e}")
+            return False
+        except FileNotFoundError:
+            log.info("pnputil not found, you may need to install the driver manually.")
 
     log.info("Virtual display driver installed.")
     return True
@@ -123,16 +142,31 @@ def uninstall() -> bool:
         log.info("Driver not installed.")
         return True
 
-    try:
-        subprocess.run(
-            ["pnputil", "/delete-driver", str(inf), "/uninstall", "/force"],
-            check=True, capture_output=True, timeout=30,
-        )
-    except subprocess.CalledProcessError as e:
-        log.error(f"Driver uninstall failed: {e}")
-        return False
-    except FileNotFoundError:
-        log.warning("pnputil not found. Remove usbmmidd.inf manually.")
+    dev_installer = dd / "deviceinstaller64.exe"
+    if dev_installer.exists():
+        try:
+            subprocess.run(
+                [str(dev_installer), "stop", "usbmmidd"],
+                check=True, capture_output=True, timeout=15,
+            )
+            subprocess.run(
+                [str(dev_installer), "remove", "usbmmidd"],
+                check=True, capture_output=True, timeout=15,
+            )
+        except subprocess.CalledProcessError as e:
+            log.error(f"Driver uninstall via deviceinstaller64 failed: {e}")
+            return False
+    else:
+        try:
+            subprocess.run(
+                ["pnputil", "/delete-driver", str(inf), "/uninstall", "/force"],
+                check=True, capture_output=True, timeout=30,
+            )
+        except subprocess.CalledProcessError as e:
+            log.error(f"Driver uninstall via pnputil failed: {e}")
+            return False
+        except FileNotFoundError:
+            log.warning("pnputil not found. Remove usbmmidd.inf manually.")
 
     shutil.rmtree(dd, ignore_errors=True)
     log.info("Virtual display driver removed.")
@@ -141,55 +175,91 @@ def uninstall() -> bool:
 
 # ---- monitor management -------------------------------------------------------
 
-def add_monitor() -> bool:
-    """Add a virtual monitor (requires driver installed).
+def _get_driver_dir() -> Optional[Path]:
+    """Return driver directory if installed."""
+    dd = _driver_dir()
+    if not dd.exists():
+        return None
+    return dd
+
+
+def add_monitor(count: int = 1) -> bool:
+    """Add virtual monitor(s) (requires driver installed).
 
     The monitor appears in Windows Display Settings as an additional display.
     You can then extend your desktop to it.
     """
     _ensure_windows()
-    if not is_installed():
+    dd = _get_driver_dir()
+    if not dd or not (dd / "usbmmidd.inf").exists():
         log.error("Driver not installed. Run 'deskctrl driver install' first.")
         return False
 
-    dd = _driver_dir()
+    dev_installer = dd / "deviceinstaller64.exe"
     bat = dd / "usbmmidd.bat"
-    if not bat.exists():
-        log.error(f"usbmmidd.bat not found in {dd}")
-        return False
 
-    log.info("Adding virtual monitor...")
-    try:
-        subprocess.run(
-            [str(bat), "add"],
-            check=True, capture_output=True, timeout=15,
-        )
-    except subprocess.CalledProcessError as e:
-        log.error(f"Failed to add monitor: {e}")
-        return False
+    for i in range(count):
+        if dev_installer.exists():
+            log.info(f"Adding virtual monitor {i+1}/{count}...")
+            try:
+                subprocess.run(
+                    [str(dev_installer), "enableidd", "1"],
+                    check=True, capture_output=True, timeout=15,
+                )
+            except subprocess.CalledProcessError as e:
+                log.error(f"Failed to add monitor: {e}")
+                return False
+        elif bat.exists():
+            log.info(f"Adding virtual monitor {i+1}/{count}...")
+            try:
+                subprocess.run(
+                    [str(bat), "add"],
+                    check=True, capture_output=True, timeout=15,
+                )
+            except subprocess.CalledProcessError as e:
+                log.error(f"Failed to add monitor: {e}")
+                return False
+        else:
+            log.error("No deviceinstaller64.exe or usbmmidd.bat found")
+            return False
 
-    log.info("Virtual monitor added. Configure it in Windows Display Settings.")
+    log.info(f"Virtual monitor(s) added ({count}). Configure in Windows Display Settings.")
     return True
 
 
 def remove_monitor() -> bool:
     """Remove all virtual monitors."""
     _ensure_windows()
-    dd = _driver_dir()
-    bat = dd / "usbmmidd.bat"
-    if not bat.exists():
+    dd = _get_driver_dir()
+    if not dd:
         log.info("No driver found to remove monitors.")
         return True
 
-    log.info("Removing virtual monitors...")
-    try:
-        subprocess.run(
-            [str(bat), "remove"],
-            check=True, capture_output=True, timeout=15,
-        )
-    except subprocess.CalledProcessError as e:
-        log.error(f"Failed to remove monitor: {e}")
-        return False
+    dev_installer = dd / "deviceinstaller64.exe"
+    bat = dd / "usbmmidd.bat"
+
+    if dev_installer.exists():
+        log.info("Removing virtual monitors...")
+        try:
+            subprocess.run(
+                [str(dev_installer), "enableidd", "0"],
+                check=True, capture_output=True, timeout=15,
+            )
+        except subprocess.CalledProcessError as e:
+            log.error(f"Failed to remove monitor: {e}")
+            return False
+    elif bat.exists():
+        log.info("Removing virtual monitors...")
+        try:
+            subprocess.run(
+                [str(bat), "remove"],
+                check=True, capture_output=True, timeout=15,
+            )
+        except subprocess.CalledProcessError as e:
+            log.error(f"Failed to remove monitor: {e}")
+            return False
+    else:
+        log.info("No deviceinstaller64 or bat found to remove monitors.")
 
     log.info("Virtual monitors removed.")
     return True
