@@ -547,19 +547,6 @@ def _pygame_keysym(key) -> tuple:
     return keysym, 0
 
 
-def _keysym_with_shift(keysym: int, mod) -> int:
-    """Convert lowercase letter to uppercase if Shift or CapsLock is held.
-
-    pynput on the server types the character as-is, so we must
-    send the correct case when a modifier key is active.
-    """
-    import pygame as pg
-    if mod & (pg.KMOD_SHIFT | pg.KMOD_CAPS):
-        if 97 <= keysym <= 122:  # a-z → A-Z
-            return keysym - 32
-    return keysym
-
-
 def _is_local_key(key, mod) -> bool:
     """Check if a key combo should be handled locally (not sent to remote).
 
@@ -690,7 +677,6 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
                     elif window_active:
                         keysym, keycode = _pygame_keysym(event.key)
                         if keysym:
-                            keysym = _keysym_with_shift(keysym, event.mod)
                             _pressed_keys[event.key] = (keysym, keycode)
                             client.send_input(MsgType.KEY_EVENT,
                                               encode_key_event(keysym, keycode, True))
@@ -897,7 +883,6 @@ def _run_extended_video(host, port, direction, quality, fps, monitor=None):
                     elif input_active:
                         keysym, keycode = _pygame_keysym(event.key)
                         if keysym:
-                            keysym = _keysym_with_shift(keysym, event.mod)
                             _pressed_keys[event.key] = (keysym, keycode)
                             client.send_input(MsgType.KEY_EVENT,
                                               encode_key_event(keysym, keycode, True))
