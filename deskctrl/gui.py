@@ -33,7 +33,7 @@ try:
     from PyQt6.QtGui import (
         QPixmap, QImage, QPainter, QKeyEvent,
         QMouseEvent, QWheelEvent, QCloseEvent,
-        QAction, QIcon, QFont, QColor, QPalette,
+        QAction, QIcon, QFont,
         QShortcut, QKeySequence,
     )
     from PyQt6.QtWidgets import (
@@ -73,7 +73,7 @@ if _HAS_QT:
                 QSizePolicy.Policy.Expanding,
                 QSizePolicy.Policy.Expanding,
             )
-            self.setStyleSheet("background-color: #1a1a1a;")
+            # Use system theme background
             self.setMouseTracking(True)
 
         def set_frame(self, frame_bgr: np.ndarray):
@@ -114,11 +114,11 @@ if _HAS_QT:
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
         # Fill background
-        painter.fillRect(self.rect(), QColor("#1a1a1a"))
+        painter.fillRect(self.rect(), self.palette().window())
 
         if self._frame is None:
             # Draw placeholder
-            painter.setPen(QColor("#666666"))
+            painter.setPen(self.palette().windowText().color())
             font = painter.font()
             font.setPointSize(14)
             painter.setFont(font)
@@ -576,7 +576,7 @@ if _HAS_QT:
                 "your screen. Move the mouse to the edge -> seamless remote control."
             )
             info.setWordWrap(True)
-            info.setStyleSheet("color: #aaa; padding: 4px;")
+            info.setStyleSheet("padding: 4px;")
             layout.addWidget(info)
 
             # ---- Server list -------------------------------------------------------------------------------------
@@ -637,26 +637,17 @@ if _HAS_QT:
             self.status_label = QLabel("")
             self.status_label.setWordWrap(True)
             self.status_label.setStyleSheet(
-                "background: #1a1a1a; padding: 6px; border-radius: 3px; "
-                "font-family: monospace; font-size: 11px; color: #0f0;"
+                "padding: 6px; font-family: monospace; font-size: 11px;"
             )
             self.status_label.setMinimumHeight(60)
             layout.addWidget(self.status_label)
 
             # ---- Buttons ---------------------------------------------------------------------------------------------
             btn_layout = QHBoxLayout()
-            self.start_btn = QPushButton("? Start Monitor Control")
-            self.start_btn.setStyleSheet(
-                "QPushButton { background: #2a6e2a; padding: 8px 16px; }"
-                "QPushButton:hover { background: #3a8e3a; }"
-            )
+            self.start_btn = QPushButton("Start Monitor Control")
             self.start_btn.clicked.connect(self._toggle_engine)
-            self.stop_btn = QPushButton("? Stop")
+            self.stop_btn = QPushButton("Stop")
             self.stop_btn.setEnabled(False)
-            self.stop_btn.setStyleSheet(
-                "QPushButton { background: #8e2a2a; padding: 8px 16px; }"
-                "QPushButton:hover { background: #ae3a3a; }"
-            )
             self.stop_btn.clicked.connect(self._stop_engine)
             self.close_btn = QPushButton("Close")
             self.close_btn.clicked.connect(self.close)
@@ -790,20 +781,7 @@ if _HAS_QT:
         app = QApplication(sys.argv)
         app.setApplicationName(__appname__)
         app.setApplicationVersion(__version__)
-        palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("#2b2b2b"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#e0e0e0"))
-        palette.setColor(QPalette.ColorRole.Base, QColor("#3c3c3c"))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#353535"))
-        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#2b2b2b"))
-        palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#e0e0e0"))
-        palette.setColor(QPalette.ColorRole.Text, QColor("#e0e0e0"))
-        palette.setColor(QPalette.ColorRole.Button, QColor("#3c3c3c"))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#e0e0e0"))
-        palette.setColor(QPalette.ColorRole.BrightText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#4a86e8"))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-        app.setPalette(palette)
+        # Use system-native theme (no custom palette)
         window = MainWindow()
         window.show()
         return app.exec()

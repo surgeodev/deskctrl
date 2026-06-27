@@ -62,7 +62,7 @@ jobs:
 
       - name: Build .exe with PyInstaller
         run: |
-          pyinstaller --onefile --name deskctrl `
+          pyinstaller --onefile --noconsole --name deskctrl `
             --icon deskctrl.ico `
             --add-data "deskctrl;deskctrl" `
             --hidden-import PyQt6 `
@@ -117,7 +117,7 @@ jobs:
 
       - name: Build macOS .app bundle
         run: |
-          pyinstaller --onefile --name deskctrl \
+          pyinstaller --onefile --windowed --name deskctrl \
             --icon deskctrl.png \
             --add-data "deskctrl:deskctrl" \
             --hidden-import PyQt6 \
