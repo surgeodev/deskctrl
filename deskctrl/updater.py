@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import webbrowser
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +18,7 @@ from . import __version__, __appname__
 
 GITHUB_REPO = "surgeodev/deskctrl"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 
 
 def _parse_version(tag: str) -> tuple:
@@ -26,8 +28,9 @@ def _parse_version(tag: str) -> tuple:
     return tuple(int(p) if p.isdigit() else 0 for p in parts)
 
 
-def _get_platform_asset() -> str:
+def _get_platform_asset(tag: str) -> str:
     """Return the release asset filename for the current platform."""
+    _ = tag  # for future use if asset names include version
     if sys.platform == "win32":
         return "deskctrl-windows-x64.zip"
     elif sys.platform == "darwin":
@@ -38,7 +41,9 @@ def _get_platform_asset() -> str:
 
 def _get_download_url(asset_name: str, tag: str) -> str:
     """Build download URL for a release asset."""
-    return f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/{asset_name}"
+    return (
+        f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/{asset_name}"
+    )
 
 
 def check_latest() -> Optional[str]:
@@ -46,7 +51,13 @@ def check_latest() -> Optional[str]:
     import urllib.request
 
     try:
-        req = urllib.request.Request(GITHUB_API, headers={"Accept": "application/json"})
+        req = urllib.request.Request(
+            GITHUB_API,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": f"deskctrl-updater/{__version__}",
+            },
+        )
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
             return data.get("tag_name")
@@ -70,6 +81,33 @@ def download_asset(dest_dir: str, tag: str, asset_name: str) -> Optional[str]:
         return None
 
 
+def _replace_exe_via_batch(exe_src: str) -> bool:
+    """Replace current PyInstaller exe via a background batch script."""
+    current_exe = sys.executable
+    batch = f"""@echo off
+timeout /t 2 /nobreak >nul
+copy /y "{exe_src}" "{current_exe}" >nul
+if errorlevel 1 (
+  echo Update failed: could not copy to {current_exe}
+  echo Try running as Administrator, or download manually:
+  echo {RELEASES_URL}
+  pause
+  exit /b 1
+)
+start "" "{current_exe}" --version
+del "%~f0"
+"""
+    batch_path = os.path.join(tempfile.gettempdir(), "deskctrl_update.bat")
+    with open(batch_path, "w", newline="\r\n") as f:
+        f.write(batch)
+    print("  Update will apply on next launch.")
+    subprocess.Popen(
+        ["cmd.exe", "/c", batch_path],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    return True
+
+
 def install_windows_zip(zip_path: str) -> bool:
     """Extract zip and replace current exe on Windows."""
     import zipfile
@@ -79,12 +117,12 @@ def install_windows_zip(zip_path: str) -> bool:
         with zipfile.ZipFile(zip_path, "r") as zf:
             zf.extractall(tmp)
 
+        # Find deskctrl.exe in the extracted files
         exe_src = os.path.join(tmp, "deskctrl.exe")
         if not os.path.exists(exe_src):
-            # maybe extracted into a subfolder
             for root, _dirs, files in os.walk(tmp):
                 for f in files:
-                    if f.endswith(".exe"):
+                    if f.lower() == "deskctrl.exe":
                         exe_src = os.path.join(root, f)
                         break
 
@@ -92,26 +130,16 @@ def install_windows_zip(zip_path: str) -> bool:
             print("  No deskctrl.exe found in zip")
             return False
 
-        current_exe = sys.executable
-
         if getattr(sys, "frozen", False):
-            # PyInstaller one-file: write a batch script that replaces and restarts
-            batch = f"""@echo off
-timeout /t 2 /nobreak >nul
-copy /y "{exe_src}" "{current_exe}" >nul
-start "" "{current_exe}" update --done
-del "%~f0"
-"""
-            batch_path = os.path.join(tempfile.gettempdir(), "deskctrl_update.bat")
-            with open(batch_path, "w") as f:
-                f.write(batch)
-            print("  Update will complete on next launch (restart required).")
-            subprocess.Popen(["cmd.exe", "/c", batch_path],
-                             creationflags=subprocess.CREATE_NO_WINDOW)
-            return True
+            # PyInstaller: replace via background batch script
+            return _replace_exe_via_batch(exe_src)
         else:
-            shutil.copy2(exe_src, current_exe)
-            return True
+            # pip install — can't replace python.exe, open releases page
+            print("  You're running from source / pip install.")
+            print(f"  Open {RELEASES_URL} in your browser.")
+            print(f"  Or run: pip install --upgrade deskctrl")
+            webbrowser.open(RELEASES_URL)
+            return False
 
     finally:
         try:
@@ -163,7 +191,7 @@ def install_linux_deb(deb_path: str) -> bool:
     try:
         subprocess.run(
             ["sudo", "dpkg", "-i", deb_path],
-            check=True, capture_output=True, text=True
+            check=True, capture_output=True, text=True,
         )
         return True
     except subprocess.CalledProcessError as e:
@@ -182,6 +210,7 @@ def update(force: bool = False) -> bool:
     latest_tag = check_latest()
     if not latest_tag:
         print("  Could not reach GitHub. Check your connection.")
+        print(f"  Manual download: {RELEASES_URL}")
         return False
 
     latest_ver = _parse_version(latest_tag)
@@ -197,12 +226,14 @@ def update(force: bool = False) -> bool:
     if latest_ver > current_ver:
         print(f"  New version available: {latest_tag}")
 
-    asset_name = _get_platform_asset()
+    asset_name = _get_platform_asset(latest_tag)
     tmpdir = tempfile.mkdtemp(prefix="deskctrl_dl_")
 
     try:
         dl_path = download_asset(tmpdir, latest_tag, asset_name)
         if not dl_path:
+            print(f"  Download failed. Try manual: {RELEASES_URL}")
+            webbrowser.open(RELEASES_URL)
             return False
 
         if sys.platform == "win32":
@@ -214,6 +245,9 @@ def update(force: bool = False) -> bool:
 
         if ok:
             print(f"  Updated to {latest_tag}!")
+            print("  The new version will be active on next launch.")
+        else:
+            print(f"  Update failed. Manual: {RELEASES_URL}")
         return ok
 
     finally:
