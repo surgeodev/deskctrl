@@ -532,6 +532,12 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
     # pygame button -> deskctrl button (1=left, 2=middle, 3=right, 4=x1, 5=x2)
     _BTN_MAP = {1: 1, 2: 3, 3: 2, 4: 4, 5: 5}
 
+    # Keys that are handled locally (never sent to server)
+    def _is_local_key(key, mod) -> bool:
+        return (key == pg.K_ESCAPE or
+                (key == pg.K_q and (mod & pg.KMOD_CTRL)) or
+                (key == pg.K_f and (mod & pg.KMOD_ALT)))
+
     def _pygame_keysym(key) -> tuple:
         """Convert pygame key to (keysym, keycode)."""
         if 32 <= key <= 126:
@@ -592,7 +598,7 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
         sys.exit(1)
 
     click.echo("  Click on the window to send input.")
-    click.echo("  Press Ctrl+Q to quit, ESC to close.")
+    click.echo("  Press Ctrl+Q to quit, ESC to close, Alt+F for fullscreen.")
 
     try:
         while running and client.state.connected:
@@ -608,7 +614,7 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
                 elif event.type == pg.KEYDOWN:
                     if event.key == pg.K_ESCAPE:
                         running = False
-                    elif event.key == pg.K_f and screen:
+                    elif event.key == pg.K_f and (event.mod & pg.KMOD_ALT) and screen:
                         pg.display.toggle_fullscreen()
                     elif event.key == pg.K_q and (event.mod & pg.KMOD_CTRL):
                         running = False
@@ -619,7 +625,7 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
                                               encode_key_event(keysym, keycode, True))
 
                 elif event.type == pg.KEYUP:
-                    if window_active:
+                    if window_active and not _is_local_key(event.key, event.mod):
                         keysym, keycode = _pygame_keysym(event.key)
                         if keysym:
                             client.send_input(MsgType.KEY_EVENT,
