@@ -151,7 +151,8 @@ class InputSimulator:
             0xFFC1: Key.f4, 0xFFC2: Key.f5, 0xFFC3: Key.f6,
             0xFFC4: Key.f7, 0xFFC5: Key.f8, 0xFFC6: Key.f9,
             0xFFC7: Key.f10, 0xFFC8: Key.f11, 0xFFC9: Key.f12,
-            0xFFE1: Key.shift, 0xFFE2: Key.shift_r,
+            0xFFE1: KeyCode.from_vk(0xA0),  # VK_LSHIFT (used by games/GLFW)
+            0xFFE2: KeyCode.from_vk(0xA1),  # VK_RSHIFT
             0xFFE3: Key.ctrl_l, 0xFFE4: Key.ctrl_r,
             0xFFE5: Key.caps_lock,
             0xFFE9: Key.alt_l, 0xFFEA: Key.alt_r,
@@ -161,12 +162,16 @@ class InputSimulator:
         }
         if keysym in special_map:
             key = special_map[keysym]
+            log.debug(f"keysym {hex(keysym)} → special {key}")
         elif keysym > 0 and keysym < 256:
             key = KeyCode.from_char(chr(keysym))
+            log.debug(f"keysym {keysym} ({chr(keysym)}) → KeyCode char")
         else:
             key = KeyCode.from_vk(keycode) if keycode else None
+            log.debug(f"keysym {hex(keysym)} → from_vk({keycode}) = {key}")
 
         if key is None:
+            log.debug(f"  → no key, dropping")
             return
 
         try:
@@ -174,8 +179,8 @@ class InputSimulator:
                 self._keyboard.press(key)
             else:
                 self._keyboard.release(key)
-        except Exception:
-            pass  # pynput can throw on some key combinations
+        except Exception as e:
+            log.error(f"pynput error for {hex(keysym)}: {e}")
 
     def _pynput_button(self, button_id: int):
         from pynput.mouse import Button
