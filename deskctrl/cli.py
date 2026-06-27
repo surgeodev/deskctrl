@@ -160,6 +160,11 @@ def connect(host, port, auto, quality, fps, fullscreen):
         host = discovered["host"]
         port = discovered["port"]
         click.echo(f"  Discovered: {discovered['name']} at {host}:{port}")
+    else:
+        # Parse optional port from host argument (e.g. "192.168.1.100:5830")
+        host, parsed_port = _parse_host_port(host)
+        if parsed_port is not None:
+            port = parsed_port
 
     _run_client(host, port, quality, fps, fullscreen)
 
@@ -192,6 +197,10 @@ def headless(host, port, auto):
         host = discovered["host"]
         port = discovered["port"]
         click.echo(f"  Discovered: {discovered['name']} at {host}:{port}")
+    else:
+        host, parsed_port = _parse_host_port(host)
+        if parsed_port is not None:
+            port = parsed_port
 
     from .client import DeskctrlClient, DISPLAY_NONE
 
@@ -243,6 +252,17 @@ def scan(timeout):
         click.echo("  No servers found.")
         click.echo("  Make sure deskctrl serve is running on another machine.")
         click.echo("  ZeroConf/mDNS must be enabled on the network.")
+
+
+def _parse_host_port(host_str: str) -> tuple:
+    """Parse 'host:port' from argument. Returns (host, port_or_None)."""
+    if host_str and ":" in host_str:
+        parts = host_str.rsplit(":", 1)
+        try:
+            return parts[0], int(parts[1])
+        except ValueError:
+            pass  # not a valid port, treat as plain host
+    return host_str, None
 
 
 def _discover_server(timeout: float = 3.0) -> list:
