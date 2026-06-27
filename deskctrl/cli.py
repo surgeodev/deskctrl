@@ -463,12 +463,29 @@ def monitor(config, add, remove, no_start, list_only, margin):
 
 def _run_client(host: str, port: int, quality: int = 80,
                 fps: int = 30, fullscreen: bool = False):
-    """Run client with pygame display."""
-    # Try using the pygame-based display for low latency
+    """Run client with pygame or OpenCV display."""
+    # Try pygame first (lower latency)
     try:
         _run_client_pygame(host, port, quality, fps, fullscreen)
+        return
     except ImportError:
+        pass
+
+    # Fallback to OpenCV display
+    try:
         _run_client_opencv(host, port, quality, fps, fullscreen)
+        return
+    except Exception as e:
+        click.echo(f"  Display not available: {e}")
+        click.echo(f"  Install pygame: pip install pygame")
+        click.echo(f"  Or use: deskctrl gui")
+        sys.exit(1)
+
+
+def _run_client_opencv(host: str, port: int, quality: int = 80,
+                       fps: int = 30, fullscreen: bool = False):
+    """Fallback client display using OpenCV window."""
+    import cv2
 
 
 def _run_client_pygame(host: str, port: int, quality: int = 80,
