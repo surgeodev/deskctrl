@@ -623,6 +623,7 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
     server_w = 0
     server_h = 0
     window_active = True  # input only sent when window is focused
+    _pressed_keys = {}  # pygame keycode -> last sent keysym (for matching KEYUP)
 
     def _scale_coords(px, py):
         """Map window pixel to server screen coordinate."""
@@ -690,16 +691,23 @@ def _run_client_pygame(host: str, port: int, quality: int = 80,
                         keysym, keycode = _pygame_keysym(event.key)
                         if keysym:
                             keysym = _keysym_with_shift(keysym, event.mod)
+                            _pressed_keys[event.key] = (keysym, keycode)
                             client.send_input(MsgType.KEY_EVENT,
                                               encode_key_event(keysym, keycode, True))
 
                 elif event.type == pg.KEYUP:
                     if window_active:
-                        keysym, keycode = _pygame_keysym(event.key)
-                        if keysym:
-                            keysym = _keysym_with_shift(keysym, event.mod)
+                        # Use cached keysym from KEYDOWN so press/release match
+                        cached = _pressed_keys.pop(event.key, None)
+                        if cached:
+                            keysym, keycode = cached
                             client.send_input(MsgType.KEY_EVENT,
                                               encode_key_event(keysym, keycode, False))
+                        else:
+                            keysym, keycode = _pygame_keysym(event.key)
+                            if keysym:
+                                client.send_input(MsgType.KEY_EVENT,
+                                                  encode_key_event(keysym, keycode, False))
 
                 elif event.type == pg.MOUSEMOTION:
                     if window_active:
@@ -841,6 +849,7 @@ def _run_extended_video(host, port, direction, quality, fps, monitor=None):
     frame_surface = None
     server_w, server_h = 0, 0
     input_active = False  # only send input when mouse is inside
+    _pressed_keys = {}  # pygame keycode -> last sent keysym (for matching KEYUP)
 
     def on_status(msg):
         click.echo(f"  {msg}")
@@ -889,15 +898,21 @@ def _run_extended_video(host, port, direction, quality, fps, monitor=None):
                         keysym, keycode = _pygame_keysym(event.key)
                         if keysym:
                             keysym = _keysym_with_shift(keysym, event.mod)
+                            _pressed_keys[event.key] = (keysym, keycode)
                             client.send_input(MsgType.KEY_EVENT,
                                               encode_key_event(keysym, keycode, True))
                 elif event.type == pg.KEYUP:
                     if input_active:
-                        keysym, keycode = _pygame_keysym(event.key)
-                        if keysym:
-                            keysym = _keysym_with_shift(keysym, event.mod)
+                        cached = _pressed_keys.pop(event.key, None)
+                        if cached:
+                            keysym, keycode = cached
                             client.send_input(MsgType.KEY_EVENT,
                                               encode_key_event(keysym, keycode, False))
+                        else:
+                            keysym, keycode = _pygame_keysym(event.key)
+                            if keysym:
+                                client.send_input(MsgType.KEY_EVENT,
+                                                  encode_key_event(keysym, keycode, False))
 
                 elif event.type == pg.MOUSEMOTION:
                     if input_active:

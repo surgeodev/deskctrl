@@ -144,18 +144,20 @@ class InputSimulator:
             0xFF1B: Key.esc, 0xFF50: Key.home, 0xFF57: Key.end,
             0xFF51: Key.left, 0xFF52: Key.up, 0xFF53: Key.right, 0xFF54: Key.down,
             0xFF55: Key.page_up, 0xFF56: Key.page_down,
+            0xFF63: Key.insert, 0xFFFF: Key.delete,
+            0xFF61: Key.print_screen, 0xFF14: Key.scroll_lock,
+            0xFF13: Key.pause, 0xFF7F: Key.num_lock,
             0xFFBE: Key.f1, 0xFFBF: Key.f2, 0xFFC0: Key.f3,
             0xFFC1: Key.f4, 0xFFC2: Key.f5, 0xFFC3: Key.f6,
             0xFFC4: Key.f7, 0xFFC5: Key.f8, 0xFFC6: Key.f9,
             0xFFC7: Key.f10, 0xFFC8: Key.f11, 0xFFC9: Key.f12,
-            0xFFE1: Key.shift, 0xFFE2: Key.shift, 0xFFE3: Key.ctrl_l,
-            0xFFE4: Key.ctrl_r, 0xFFE5: Key.caps_lock,
-            0xFFE7: Key.alt_l, 0xFFE8: Key.alt_r,
-            0xFFE9: Key.alt_gr, 0xFFEB: Key.cmd,
-            0xFFEC: Key.cmd_r, 0xFFFF: Key.delete,
-            0xFF13: Key.pause, 0xFF14: Key.scroll_lock,
-            0xFF7F: Key.num_lock, 0xFF61: Key.print_screen,
-            0xFE03: Key.alt_gr,
+            0xFFE1: Key.shift_l, 0xFFE2: Key.shift_r,
+            0xFFE3: Key.ctrl_l, 0xFFE4: Key.ctrl_r,
+            0xFFE5: Key.caps_lock,
+            0xFFE9: Key.alt_l, 0xFFEA: Key.alt_r,
+            0xFFE7: Key.cmd, 0xFFE8: Key.cmd_r,  # Meta/Super
+            0xFFEB: Key.cmd, 0xFFEC: Key.cmd_r,  # Super (Windows key)
+            0xFF67: Key.menu, 0xFE03: Key.alt_gr,
         }
         if keysym in special_map:
             key = special_map[keysym]
