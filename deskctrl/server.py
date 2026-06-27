@@ -151,7 +151,7 @@ class InputSimulator:
             0xFFC1: Key.f4, 0xFFC2: Key.f5, 0xFFC3: Key.f6,
             0xFFC4: Key.f7, 0xFFC5: Key.f8, 0xFFC6: Key.f9,
             0xFFC7: Key.f10, 0xFFC8: Key.f11, 0xFFC9: Key.f12,
-            0xFFE1: Key.shift_l, 0xFFE2: Key.shift_r,
+            0xFFE1: Key.shift, 0xFFE2: Key.shift_r,
             0xFFE3: Key.ctrl_l, 0xFFE4: Key.ctrl_r,
             0xFFE5: Key.caps_lock,
             0xFFE9: Key.alt_l, 0xFFEA: Key.alt_r,
