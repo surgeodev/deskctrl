@@ -26,13 +26,48 @@ from dataclasses import dataclass, field, asdict
 from typing import Optional, Callable, Dict, List, Tuple
 
 from . import __version__
-from .protocol import (
-    MsgType, HEADER_SIZE, encode_msg, decode_header,
-    encode_hello, decode_hello,
-    encode_pointer_move, encode_pointer_button,
-    encode_key_event, encode_scroll,
-    decode_resolution,
-)
+
+# ── Self-contained protocol for monitor control connections ────────────────
+# This is a separate wire protocol (input-only, no video streaming).
+# Uses >II framing (8-byte header) independent of the main protocol.py.
+
+_MSG_HELLO        = 0x01
+_MSG_HELLO_ACK    = 0x02
+_MSG_POINTER_MOVE = 0x20
+_MSG_POINTER_BUTTON = 0x21
+_MSG_KEY_EVENT    = 0x22
+_MSG_SCROLL       = 0x23
+_MSG_RESOLUTION   = 0x40
+_MSG_KEEPALIVE    = 0xFF
+_HEADER_SIZE      = 8
+
+def _encode_msg(mt: int, payload: bytes = b"") -> bytes:
+    return struct.pack("!II", mt, len(payload)) + payload
+
+def _decode_header(data: bytes):
+    return struct.unpack("!II", data)
+
+def _encode_hello(version: str) -> bytes:
+    return version.encode("utf-8")
+
+def _decode_hello(payload: bytes) -> str:
+    return payload.decode("utf-8")
+
+def _decode_resolution(payload: bytes):
+    return struct.unpack("!II", payload)
+
+def _encode_pointer_move(x: float, y: float, relative: bool = False) -> bytes:
+    flags = 0x01 if relative else 0x00
+    return struct.pack("!Bii", flags, int(x), int(y))
+
+def _encode_pointer_button(button: int, pressed: bool, x: float, y: float) -> bytes:
+    return struct.pack("!BiiB", 0x01 if pressed else 0x00, int(x), int(y), button)
+
+def _encode_key_event(keysym: int, keycode: int, pressed: bool) -> bytes:
+    return struct.pack("!IIB", keysym, keycode, 0x01 if pressed else 0x00)
+
+def _encode_scroll(dx: float, dy: float) -> bytes:
+    return struct.pack("!ii", int(dx), int(dy))
 
 log = logging.getLogger(__name__)
 
@@ -240,24 +275,24 @@ class MonitorControlEngine:
                 sock.connect((cfg.host, cfg.port))
 
                 # ---- Handshake ---------------------------------------------------------------------------------
-                data = self._recv_exact(sock, HEADER_SIZE)
+                data = self._recv_exact(sock, _HEADER_SIZE)
                 if not data:
                     raise ConnectionError("no hello")
-                mt, length = decode_header(data)
-                if mt != MsgType.HELLO:
+                mt, length = _decode_header(data)
+                if mt != _MSG_HELLO:
                     raise ConnectionError(f"expected HELLO, got {mt}")
                 payload = self._recv_exact(sock, length)
-                self._send_msg(sock, MsgType.HELLO_ACK,
-                               encode_hello(f"{__version__}-monitor"))
+                self._send_msg(sock, _MSG_HELLO_ACK,
+                               _encode_hello(f"{__version__}-monitor"))
 
                 # ---- Read server resolution --------------------------------------------------------
-                data = self._recv_exact(sock, HEADER_SIZE)
+                data = self._recv_exact(sock, _HEADER_SIZE)
                 if data:
-                    mt, length = decode_header(data)
-                    if mt == MsgType.RESOLUTION:
+                    mt, length = _decode_header(data)
+                    if mt == _MSG_RESOLUTION:
                         payload = self._recv_exact(sock, length)
                         if payload:
-                            w, h = decode_resolution(payload)
+                            w, h = _decode_resolution(payload)
                             cfg.screen_width = w
                             cfg.screen_height = h
 
@@ -278,7 +313,7 @@ class MonitorControlEngine:
                 # ---- Keepalive ping loop -------------------------------------------------------------
                 while self._running:
                     try:
-                        sock.sendall(encode_msg(MsgType.KEEPALIVE))
+                        sock.sendall(_encode_msg(_MSG_KEEPALIVE))
                         time.sleep(5)
                     except OSError:
                         break
@@ -312,8 +347,8 @@ class MonitorControlEngine:
                 sx, sy = self._map_to_server(x, y, self._active_config)
                 self._server_mouse_x, self._server_mouse_y = sx, sy
                 try:
-                    self._send_msg(self._active_sock, MsgType.POINTER_MOVE,
-                                   encode_pointer_move(sx, sy, relative=False))
+                    self._send_msg(self._active_sock, _MSG_POINTER_MOVE,
+                                   _encode_pointer_move(sx, sy))
                 except OSError:
                     self._deactivate()
             else:
@@ -330,10 +365,10 @@ class MonitorControlEngine:
                 return
             btn_id = self._pynput_button_id(button)
             try:
-                self._send_msg(self._active_sock, MsgType.POINTER_BUTTON,
-                               encode_pointer_button(btn_id, pressed,
-                                                     self._server_mouse_x,
-                                                     self._server_mouse_y))
+                self._send_msg(self._active_sock, _MSG_POINTER_BUTTON,
+                               _encode_pointer_button(btn_id, pressed,
+                                                      self._server_mouse_x,
+                                                      self._server_mouse_y))
             except OSError:
                 self._deactivate()
 
@@ -344,8 +379,8 @@ class MonitorControlEngine:
             if self._active_sock is None:
                 return
             try:
-                self._send_msg(self._active_sock, MsgType.SCROLL,
-                               encode_scroll(dx, dy))
+                self._send_msg(self._active_sock, _MSG_SCROLL,
+                               _encode_scroll(dx, dy))
             except OSError:
                 self._deactivate()
 
@@ -366,8 +401,8 @@ class MonitorControlEngine:
             keysym, keycode = self._key_info(key)
             if keysym is not None:
                 try:
-                    self._send_msg(self._active_sock, MsgType.KEY_EVENT,
-                                   encode_key_event(keysym, keycode, True))
+                    self._send_msg(self._active_sock, _MSG_KEY_EVENT,
+                                   _encode_key_event(keysym, keycode, True))
                 except OSError:
                     self._deactivate()
 
@@ -438,8 +473,8 @@ class MonitorControlEngine:
         sx, sy = self._map_to_server(self._mouse_x, self._mouse_y, cfg)
         self._server_mouse_x, self._server_mouse_y = sx, sy
         try:
-            self._send_msg(sock, MsgType.POINTER_MOVE,
-                           encode_pointer_move(sx, sy, relative=False))
+            self._send_msg(sock, _MSG_POINTER_MOVE,
+                           _encode_pointer_move(sx, sy))
         except OSError:
             self._deactivate()
             return
@@ -467,9 +502,9 @@ class MonitorControlEngine:
     # Utilities
     # ???????????????????????????????????????????????????????????????????
 
-    def _send_msg(self, sock: socket.socket, mt: MsgType, payload: bytes = b""):
+    def _send_msg(self, sock: socket.socket, mt: int, payload: bytes = b""):
         """Send a framed message over a raw socket."""
-        sock.sendall(struct.pack("!II", mt.value, len(payload)) + payload)
+        sock.sendall(_encode_msg(mt, payload))
 
     def _recv_exact(self, sock: socket.socket, size: int) -> Optional[bytes]:
         chunks: List[bytes] = []

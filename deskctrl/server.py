@@ -1,655 +1,314 @@
-"""deskctrl server -- captures screen, streams video, receives input."""
+"""
+TCP server: captures the desktop, streams frames, receives and injects input.
 
+Usage (via CLI):
+    deskctrl serve [--monitor N] [--virtual]
+
+One ServerSession is created per connected client. The server supports
+multiple simultaneous clients but only one per physical monitor slot.
+
+For "extend" mode clients, video streaming is skipped — only input injection
+is active (they supply a virtual monitor canvas for the OS to render to).
+"""
+
+from __future__ import annotations
 import io
-import os
+import json
 import socket
-import struct
 import threading
 import time
-import logging
-from typing import Optional, Callable
-from concurrent.futures import ThreadPoolExecutor
+import sys
+from typing import Callable
+from . import protocol
+from .clipboard import set_text, get_text, ClipboardWatcher
 
-import numpy as np
-from PIL import Image
-import cv2
+try:
+    import mss
+    import mss.tools
+    _MSS_AVAILABLE = True
+except ImportError:
+    _MSS_AVAILABLE = False
 
-from . import __version__
-from .protocol import (
-    MsgType, HEADER_SIZE, encode_msg, decode_header,
-    encode_hello, decode_hello,
-    encode_pointer_move, decode_pointer_move,
-    encode_pointer_button, decode_pointer_button,
-    encode_key_event, decode_key_event,
-    encode_scroll, decode_scroll,
-    encode_clipboard, decode_clipboard,
-    encode_resolution, decode_resolution,
-    encode_settings, decode_settings,
-    encode_video_frame,
-)
-from .platform import IS_WINDOWS, IS_LINUX, IS_MACOS
-
-log = logging.getLogger(__name__)
-
-# ---- Screen Capture -----------------------------------------------------------------------------------------------------------------
-
-class ScreenCapture:
-    """Cross-platform screen capture using mss."""
-
-    def __init__(self, monitor: int = 1):
-        import mss
-        self._sct = mss.mss()
-        self._monitor_idx = monitor
-        self._monitor = self._get_monitor()
-        self.width = self._monitor["width"]
-        self.height = self._monitor["height"]
-
-    def _get_monitor(self) -> dict:
-        monitors = self._sct.monitors
-        if self._monitor_idx < len(monitors):
-            return monitors[self._monitor_idx]
-        return monitors[-1]  # fallback to last monitor
-
-    def capture(self) -> np.ndarray:
-        """Capture screen as BGRA numpy array."""
-        img = self._sct.grab(self._monitor)
-        return np.array(img)  # BGRA
-
-    def update_monitor(self, monitor_idx: int):
-        self._monitor_idx = monitor_idx
-        self._monitor = self._get_monitor()
-        self.width = self._monitor["width"]
-        self.height = self._monitor["height"]
-
-    def close(self):
-        self._sct.close()
+DEFAULT_PORT = 5900
+JPEG_QUALITY = 60
+TARGET_FPS = 30
 
 
-# ---- JPEG Encoder ---------------------------------------------------------------------------------------------------------------------
-
-class JPEGEncoder:
-    """Encodes numpy frames to JPEG bytes."""
-
-    def __init__(self, quality: int = 80, target_fps: int = 30):
-        self.quality = quality
-        self.target_fps = target_fps
-        self._encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
-
-    def encode(self, frame_bgra: np.ndarray) -> tuple:
-        """Encode frame to JPEG. Returns (jpeg_bytes, width, height)."""
-        # BGRA -> BGR (mss captures in BGRA)
-        frame_bgr = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
-        height, width = frame_bgr.shape[:2]
-        # Resize if needed (optional downscaling)
-        success, encoded = cv2.imencode(".jpg", frame_bgr, self._encode_params)
-        if not success:
-            return b"", width, height
-        return encoded.tobytes(), width, height
-
-    def update_quality(self, quality: int):
-        self.quality = max(1, min(100, quality))
-        self._encode_params[1] = self.quality
+def _capture_frame(sct, monitor_index: int, quality: int) -> bytes:
+    """Capture a single frame as JPEG bytes using mss."""
+    monitors = sct.monitors  # [0] = all, [1] = primary, [2]...
+    idx = min(monitor_index + 1, len(monitors) - 1)  # sct.monitors[0] is "all"
+    mon = monitors[idx]
+    img = sct.grab(mon)
+    buf = io.BytesIO()
+    from PIL import Image
+    pil = Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
+    pil.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
 
 
-# ---- Input Simulator ----------------------------------------------------------------------------------------------------------------
+class ServerSession(threading.Thread):
+    def __init__(self, sock: socket.socket, addr, monitor: int = 0,
+                 virtual: bool = False):
+        super().__init__(daemon=True)
+        self._sock = sock
+        self._addr = addr
+        self._monitor = monitor
+        self._virtual = virtual
+        self._running = False
+        self._mode = "connect"
+        self._client_monitor = 0
 
-class InputSimulator:
-    """Simulate keyboard/mouse input on the host machine."""
-
-    def __init__(self):
-        self._mouse = None
-        self._keyboard = None
-        self._init()
-
-    def _init(self):
-        try:
-            from pynput.mouse import Controller as MouseCtrl
-            from pynput.keyboard import Controller as KeyCtrl
-            self._mouse = MouseCtrl()
-            self._keyboard = KeyCtrl()
-        except ImportError:
-            log.warning("pynput not available -- input simulation disabled")
-
-    def move_mouse(self, x: float, y: float, relative: bool = False):
-        if not self._mouse:
-            return
-        if relative:
-            self._mouse.move(x, y)
-        else:
-            self._mouse.position = (x, y)
-
-    def click_mouse(self, button: int, pressed: bool, x: float, y: float):
-        if not self._mouse:
-            return
-        self._mouse.position = (x, y)
-        btn = self._pynput_button(button)
-        if pressed:
-            self._mouse.press(btn)
-        else:
-            self._mouse.release(btn)
-
-    def scroll(self, dx: float, dy: float):
-        if not self._mouse:
-            return
-        self._mouse.scroll(int(dx), int(dy))
-
-    def key_event(self, keysym: int, keycode: int, pressed: bool):
-        if not self._keyboard:
-            return
-
-        # On Windows, use direct SendInput via ctypes.
-        # This bypasses pynput's modifier tracking which doesn't properly
-        # set VK modifier state for games (GLFW/raw input).
-        try:
-            from .win32_input import is_available, key_event as send_key
-            if is_available():
-                handled = send_key(keysym, pressed)
-                log.debug(f"win32_input: keysym={hex(keysym)} pressed={pressed} → {handled}")
-                if handled:
-                    return
-                # Fall through to pynput if win32_input didn't handle it
-        except ImportError:
-            pass
-
-        # Fallback: use pynput
-        from pynput.keyboard import Key, KeyCode
-        special_map = {
-            0xFF08: Key.backspace, 0xFF09: Key.tab, 0xFF0D: Key.enter,
-            0xFF1B: Key.esc, 0xFF50: Key.home, 0xFF57: Key.end,
-            0xFF51: Key.left, 0xFF52: Key.up, 0xFF53: Key.right, 0xFF54: Key.down,
-            0xFF55: Key.page_up, 0xFF56: Key.page_down,
-            0xFF63: Key.insert, 0xFFFF: Key.delete,
-            0xFF61: Key.print_screen, 0xFF14: Key.scroll_lock,
-            0xFF13: Key.pause, 0xFF7F: Key.num_lock,
-            0xFFBE: Key.f1, 0xFFBF: Key.f2, 0xFFC0: Key.f3,
-            0xFFC1: Key.f4, 0xFFC2: Key.f5, 0xFFC3: Key.f6,
-            0xFFC4: Key.f7, 0xFFC5: Key.f8, 0xFFC6: Key.f9,
-            0xFFC7: Key.f10, 0xFFC8: Key.f11, 0xFFC9: Key.f12,
-            0xFFE1: KeyCode.from_vk(0xA0),  # VK_LSHIFT
-            0xFFE2: KeyCode.from_vk(0xA1),  # VK_RSHIFT
-            0xFFE3: Key.ctrl_l, 0xFFE4: Key.ctrl_r,
-            0xFFE5: Key.caps_lock,
-            0xFFE9: Key.alt_l, 0xFFEA: Key.alt_r,
-            0xFFE7: Key.cmd, 0xFFE8: Key.cmd_r,
-            0xFFEB: Key.cmd, 0xFFEC: Key.cmd_r,
-            0xFF67: Key.menu, 0xFE03: Key.alt_gr,
-        }
-        if keysym in special_map:
-            key = special_map[keysym]
-            log.debug(f"pynput: keysym {hex(keysym)} → special {key}")
-        elif keysym > 0 and keysym < 256:
-            key = KeyCode.from_char(chr(keysym))
-            log.debug(f"pynput: keysym {keysym} ({chr(keysym)}) → KeyCode char")
-        else:
-            key = KeyCode.from_vk(keycode) if keycode else None
-            log.debug(f"pynput: keysym {hex(keysym)} → from_vk({keycode}) = {key}")
-
-        if key is None:
-            log.debug(f"pynput: no key, dropping")
-            return
+    def run(self) -> None:
+        self._running = True
+        print(f"[server] Client connected: {self._addr}")
 
         try:
-            if pressed:
-                self._keyboard.press(key)
-            else:
-                self._keyboard.release(key)
+            from .input_controller import InputController
+            ctrl = InputController()
         except Exception as e:
-            log.error(f"pynput error for {hex(keysym)}: {e}")
-
-    def _pynput_button(self, button_id: int):
-        from pynput.mouse import Button
-        if button_id == 1:
-            return Button.left
-        elif button_id == 2:
-            return Button.middle
-        elif button_id == 3:
-            return Button.right
-        elif button_id == 4:
-            return Button.x1
-        elif button_id == 5:
-            return Button.x2
-        return Button.left
-
-    def close(self):
-        self._mouse = None
-        self._keyboard = None
-
-
-# ---- HDMI Capture Source --------------------------------------------------------------------------------------------------------
-
-class HDMICapture:
-    """Capture from HDMI capture card via OpenCV."""
-
-    def __init__(self, device_path: str = None):
-        self._device_path = device_path
-        self._cap = None
-        self.width = 0
-        self.height = 0
-
-    def open(self, device_path: str = None) -> bool:
-        path = device_path or self._device_path
-        if not path:
-            # Auto-detect on Linux
-            if IS_LINUX:
-                path = "/dev/video0"
-            elif IS_WINDOWS:
-                path = 0  # First DShow device
-            elif IS_MACOS:
-                path = "0"  # First AVFoundation device
+            print(f"[server] InputController unavailable: {e}")
+            ctrl = None
 
         try:
-            if IS_LINUX:
-                self._cap = cv2.VideoCapture(path, cv2.CAP_V4L2)
-            elif IS_WINDOWS:
-                self._cap = cv2.VideoCapture(path, cv2.CAP_DSHOW)
-            elif IS_MACOS:
-                self._cap = cv2.VideoCapture(int(path) if path.isdigit() else 0)
-            else:
-                self._cap = cv2.VideoCapture(path)
+            # Receive client SETTINGS
+            msg_type, payload = protocol.recv_message(self._sock)
+            if msg_type != protocol.MSG_SETTINGS:
+                print("[server] Expected SETTINGS, got:", msg_type)
+                return
 
-            if not self._cap or not self._cap.isOpened():
-                return False
+            client_settings = protocol.decode_settings(payload)
+            self._mode = client_settings.get("mode", "connect")
+            self._client_monitor = client_settings.get("monitor", 0)
 
-            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-            self._cap.set(cv2.CAP_PROP_FPS, 30)
+            # Determine monitor to capture
+            mon_idx = self._client_monitor if self._client_monitor else self._monitor
 
-            self.width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            self.height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            return True
-        except Exception:
-            return False
+            # Get screen dimensions
+            width, height = 1920, 1080
+            if _MSS_AVAILABLE:
+                with mss.mss() as sct:
+                    monitors = sct.monitors
+                    idx = min(mon_idx + 1, len(monitors) - 1)
+                    m = monitors[idx]
+                    width = m["width"]
+                    height = m["height"]
 
-    def read(self) -> Optional[np.ndarray]:
-        if not self._cap:
-            return None
-        ret, frame = self._cap.read()
-        if not ret:
-            return None
-        return frame  # BGR
+            # Send server SETTINGS
+            srv_settings = {
+                "width": width,
+                "height": height,
+                "monitor": mon_idx,
+                "server_version": "0.1.0",
+            }
+            protocol.send_message(self._sock, protocol.MSG_SETTINGS,
+                                  protocol.encode_settings(srv_settings))
 
-    def close(self):
-        if self._cap:
-            self._cap.release()
+            if ctrl:
+                ctrl.reset()
 
+            is_extend = (self._mode == "extend")
 
-# ---- Server Engine --------------------------------------------------------------------------------------------------------------------
+            # Start video streaming thread (skipped for extend mode)
+            if not is_extend:
+                stream_thread = threading.Thread(
+                    target=self._stream_loop,
+                    args=(mon_idx, width, height),
+                    daemon=True,
+                )
+                stream_thread.start()
 
-class DeskctrlServer:
-    """Main server that accepts client connections and streams screen."""
+            # Start clipboard watcher (send local clipboard changes to client)
+            clipboard_watcher = ClipboardWatcher(
+                lambda text: self._send_clipboard(text)
+            )
+            clipboard_watcher.start()
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 5830,
-                 fps: int = 30, quality: int = 80,
-                 monitor: int = 1, no_display: bool = False):
-        self.host = host
-        self.port = port
-        self.target_fps = fps
-        self.jpeg_quality = quality
-        self.monitor_idx = monitor
-        self.no_display = no_display  # --nowindow equivalent
+            # Input receive loop
+            self._input_loop(ctrl)
 
-        self._server_socket: Optional[socket.socket] = None
-        self._client_socket: Optional[socket.socket] = None
-        self._client_addr: Optional[tuple] = None
-        self._running = False
-        self._streaming = False
-        self._hdmi_mode = False
-        self._frame_interval = 1.0 / fps
-
-        # Components
-        self._capture: Optional[ScreenCapture] = None
-        self._hdmi_cap: Optional[HDMICapture] = None
-        self._encoder: Optional[JPEGEncoder] = None
-        self._input: Optional[InputSimulator] = None
-
-        # Callbacks
-        self.on_client_connected: Optional[Callable] = None
-        self.on_client_disconnected: Optional[Callable] = None
-        self.on_status: Optional[Callable] = None
-
-        # Tracking
-        self._client_thread: Optional[threading.Thread] = None
-        self._stream_thread: Optional[threading.Thread] = None
-        self._keepalive_thread: Optional[threading.Thread] = None
-        self._fps_counter = 0
-        self._fps_timer = time.time()
-        self._lock = threading.RLock()  # Use RLock because _disconnect_client is called inside locked sections
-
-    @property
-    def connected(self) -> bool:
-        return self._client_socket is not None
-
-    def start(self) -> bool:
-        """Start the server (listening for connections)."""
-        try:
-            self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self._server_socket.settimeout(1.0)  # Allow checking _running
-            self._server_socket.bind((self.host, self.port))
-            self._server_socket.listen(1)
-            self._running = True
-            self._emit_status(f"Server listening on {self.host}:{self.port}")
-
-            # Accept clients in background
-            self._client_thread = threading.Thread(target=self._accept_loop, daemon=True)
-            self._client_thread.start()
-            return True
-        except OSError as e:
-            self._emit_status(f"Failed to start server: {e}")
-            return False
-
-    def stop(self):
-        """Stop the server."""
-        self._running = False
-        self._disconnect_client()
-        if self._server_socket:
+        except Exception as e:
+            print(f"[server] Session error: {e}")
+        finally:
+            self._running = False
             try:
-                self._server_socket.close()
+                self._sock.close()
             except Exception:
                 pass
-            self._server_socket = None
-        if self._capture:
-            self._capture.close()
-            self._capture = None
-        if self._hdmi_cap:
-            self._hdmi_cap.close()
-            self._hdmi_cap = None
-        self._emit_status("Server stopped")
+            print(f"[server] Client disconnected: {self._addr}")
 
-    def toggle_hdmi(self, device_path: str = None) -> bool:
-        """Toggle between screen capture and HDMI capture."""
-        if self._hdmi_mode:
-            # Switch back to screen capture
-            self._hdmi_mode = False
-            if self._hdmi_cap:
-                self._hdmi_cap.close()
-                self._hdmi_cap = None
-            self._capture = ScreenCapture(self.monitor_idx)
-            self._emit_status("Switched to screen capture mode")
-        else:
-            # Switch to HDMI
-            hdmi = HDMICapture()
-            if hdmi.open(device_path):
-                self._hdmi_cap = hdmi
-                self._hdmi_mode = True
-                if self._capture:
-                    self._capture.close()
-                    self._capture = None
-                self._emit_status(f"Switched to HDMI capture: {device_path}")
-                return True
-            else:
-                self._emit_status(f"Failed to open HDMI device: {device_path}")
-                return False
-        return True
+    def _send(self, msg_type: int, payload: bytes) -> None:
+        if self._running:
+            try:
+                protocol.send_message(self._sock, msg_type, payload)
+            except Exception:
+                self._running = False
 
-    def _emit_status(self, msg: str):
-        log.info(msg)
-        if self.on_status:
-            self.on_status(msg)
+    def _send_clipboard(self, text: str) -> None:
+        self._send(protocol.MSG_CLIPBOARD, text.encode("utf-8"))
 
-    def _accept_loop(self):
-        """Background thread: accept one client at a time."""
+    def _stream_loop(self, mon_idx: int, width: int, height: int) -> None:
+        interval = 1.0 / TARGET_FPS
+        if not _MSS_AVAILABLE:
+            print("[server] mss not available, no video stream.")
+            return
+        with mss.mss() as sct:
+            while self._running:
+                t0 = time.monotonic()
+                try:
+                    frame = _capture_frame(sct, mon_idx, JPEG_QUALITY)
+                    self._send(protocol.MSG_FRAME, frame)
+                except Exception as e:
+                    print(f"[server] Stream error: {e}")
+                    break
+                elapsed = time.monotonic() - t0
+                sleep = interval - elapsed
+                if sleep > 0:
+                    time.sleep(sleep)
+
+    def _input_loop(self, ctrl) -> None:
         while self._running:
             try:
-                client, addr = self._server_socket.accept()
-                log.debug(f"Accepted connection from {addr}")
-                with self._lock:
-                    # Disconnect previous client if any
-                    self._disconnect_client()
-                    self._client_socket = client
-                    self._client_addr = addr
-                self._emit_status(f"Client connected from {addr[0]}:{addr[1]}")
-                if self.on_client_connected:
-                    self.on_client_connected(addr)
-                # Handle client (handshake, stream, input)
-                self._handle_client(client)
-            except socket.timeout:
-                continue
-            except OSError:
+                msg_type, payload = protocol.recv_message(self._sock)
+            except Exception:
+                self._running = False
                 break
 
-    def _disconnect_client(self):
-        """Disconnect current client."""
-        with self._lock:
-            if self._client_socket:
-                try:
-                    self._client_socket.close()
-                except Exception:
-                    pass
-                self._client_socket = None
-                self._client_addr = None
-            self._streaming = False
-        # Stop keepalive
-        if self._keepalive_thread and self._keepalive_thread.is_alive():
-            self._keepalive_thread = None
+            if msg_type == protocol.MSG_INPUT_KEY:
+                pressed, keysym = protocol.decode_key(payload)
+                if ctrl:
+                    if pressed:
+                        ctrl.key_down(keysym)
+                    else:
+                        ctrl.key_up(keysym)
 
-    def _handle_client(self, client: socket.socket):
-        """Handle a connected client: send HELLO, then stream/input loop."""
-        # Initialize components
-        self._encoder = JPEGEncoder(self.jpeg_quality, self.target_fps)
-        self._input = InputSimulator()
-        # Reset Windows direct input modifier state for fresh connection
+            elif msg_type == protocol.MSG_INPUT_MOUSE:
+                evt = protocol.decode_mouse(payload)
+                if ctrl:
+                    if evt["type"] == "move":
+                        ctrl.mouse_move(evt["x"], evt["y"])
+                    elif evt["type"] == "press":
+                        ctrl.mouse_press(evt["x"], evt["y"], evt["button"])
+                    elif evt["type"] == "release":
+                        ctrl.mouse_release(evt["x"], evt["y"], evt["button"])
+                    elif evt["type"] == "scroll":
+                        ctrl.mouse_scroll(evt["dx"], evt["dy"])
+
+            elif msg_type == protocol.MSG_CLIPBOARD:
+                text = payload.decode("utf-8", errors="replace")
+                set_text(text)
+
+            elif msg_type == protocol.MSG_PING:
+                self._send(protocol.MSG_PONG, b"")
+
+
+def serve(host: str = "0.0.0.0", port: int = DEFAULT_PORT,
+          monitor: int = 0, virtual: bool = False) -> None:
+    """Start the deskctrl TCP server."""
+
+    if virtual:
         try:
-            from . import win32_input
-            win32_input.reset()
-        except Exception:
-            pass
-        if not self._hdmi_mode:
-            try:
-                self._capture = ScreenCapture(self.monitor_idx)
-                self._emit_status(f"Screen: {self._capture.width}x{self._capture.height}")
-            except Exception as e:
-                self._emit_status(f"Screen capture init error: {e}")
-                self._disconnect_client()
-                return
-        try:
-            # Send HELLO
-            client.sendall(encode_msg(MsgType.HELLO, encode_hello(__version__)))
-
-            # Wait for HELLO_ACK
-            data = self._recv_exact(client, HEADER_SIZE)
-            if not data:
-                raise ConnectionError("No handshake response")
-            msg_type, length = decode_header(data)
-            monitor_mode = False
-            if msg_type == MsgType.HELLO_ACK:
-                payload = self._recv_exact(client, length)
-                if payload:
-                    info = decode_hello(payload)
-                    client_ver = info.get('version', '?')
-                    monitor_mode = "-monitor" in client_ver
-                    self._emit_status(f"Client version: {client_ver}")
-                    if monitor_mode:
-                        self._emit_status("Monitor mode: skipping video stream")
-            else:
-                self._emit_status(f"Unexpected handshake message: {msg_type}")
-                return
-
-            # Send resolution info
-            if self._capture:
-                res_payload = encode_resolution(self._capture.width, self._capture.height)
-                client.sendall(encode_msg(MsgType.RESOLUTION, res_payload))
-
-            # Start streaming (skip for monitor-mode clients)
-            self._streaming = True
-            if not monitor_mode:
-                self._stream_thread = threading.Thread(
-                    target=self._stream_loop, args=(client,), daemon=True
-                )
-                self._stream_thread.start()
-
-            # Start keepalive
-            self._keepalive_thread = threading.Thread(
-                target=self._keepalive_loop, args=(client,), daemon=True
-            )
-            self._keepalive_thread.start()
-
-            # Main loop: receive input events
-            self._input_loop(client)
-
-        except (ConnectionError, OSError) as e:
-            self._emit_status(f"Client disconnected: {e}")
+            from .virtual_display import activate_virtual_display
+            activate_virtual_display()
         except Exception as e:
-            log.exception("Error handling client")
-            self._emit_status(f"Error: {e}")
-        finally:
-            self._streaming = False
-            if self._capture:
-                self._capture.close()
-                self._capture = None
-            if self._hdmi_cap:
-                self._hdmi_cap.close()
-                self._hdmi_cap = None
-            if self._input:
-                self._input.close()
-                self._input = None
-            addr = self._client_addr
-            self._disconnect_client()
-            if addr and self.on_client_disconnected:
-                self.on_client_disconnected(addr)
-            self._emit_status("Client disconnected")
+            print(f"[server] Virtual display setup failed: {e}")
 
-    def _input_loop(self, client: socket.socket):
-        """Receive and process input messages from client."""
-        buffer = bytearray()
-        while self._streaming and self._running:
+    server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_sock.bind((host, port))
+    server_sock.listen(5)
+    print(f"[server] Listening on {host}:{port} (monitor={monitor}, virtual={virtual})")
+
+    try:
+        while True:
+            sock, addr = server_sock.accept()
+            session = ServerSession(sock, addr, monitor=monitor, virtual=virtual)
+            session.start()
+    except KeyboardInterrupt:
+        print("\n[server] Shutting down.")
+    finally:
+        server_sock.close()
+
+
+# ── v0.2.7 compatibility wrapper for PyQt6 GUI ──────────────────────────
+
+
+class DeskctrlServer:
+    """Compatibility wrapper running the server accept loop in a background thread.
+
+    Provides v0.2.7 DeskctrlServer API: start(), stop(), and callbacks.
+    Note: has its own accept loop (does not use serve()) so stop() works cleanly.
+    """
+
+    def __init__(self, host: str = "0.0.0.0", port: int = DEFAULT_PORT,
+                 fps: int = TARGET_FPS, quality: int = JPEG_QUALITY,
+                 monitor: int = 0, no_display: bool = False):
+        self._host = host
+        self._port = port
+        self._monitor = monitor
+        self._fps = fps
+        self._quality = quality
+        self._no_display = no_display
+        self._thread: threading.Thread | None = None
+        self._running = False
+        self._server_sock: socket.socket | None = None
+
+        # Callbacks
+        self.on_status: Callable[[str], None] | None = None
+        self.on_client_connected: Callable[[tuple], None] | None = None
+        self.on_client_disconnected: Callable[[tuple], None] | None = None
+
+    def start(self) -> bool:
+        """Start server in a background thread."""
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        if self.on_status:
+            self.on_status(f"Server started on {self._host}:{self._port}")
+        return True
+
+    def stop(self):
+        """Stop the server: close server socket and join thread."""
+        self._running = False
+        if self._server_sock:
             try:
-                data = client.recv(4096)
-            except OSError:
-                break
-            if not data:
-                break
-            buffer.extend(data)
-            while len(buffer) >= HEADER_SIZE:
-                msg_type, length = decode_header(bytes(buffer[:HEADER_SIZE]))
-                total = HEADER_SIZE + length
-                if len(buffer) < total:
-                    break
-                payload = bytes(buffer[HEADER_SIZE:total])
-                buffer = buffer[total:]
-                self._process_input(msg_type, payload)
+                self._server_sock.close()
+            except Exception:
+                pass
+            self._server_sock = None
+        if self.on_status:
+            self.on_status("Server stopped")
 
-    def _process_input(self, msg_type: MsgType, payload: bytes):
-        """Process a single input message from client."""
+    def _run(self):
         try:
-            if msg_type == MsgType.POINTER_MOVE:
-                x, y, rel = decode_pointer_move(payload)
-                self._input.move_mouse(x, y, rel)
-            elif msg_type == MsgType.POINTER_BUTTON:
-                button, pressed, x, y = decode_pointer_button(payload)
-                self._input.click_mouse(button, pressed, x, y)
-            elif msg_type == MsgType.KEY_EVENT:
-                keysym, keycode, pressed = decode_key_event(payload)
-                self._input.key_event(keysym, keycode, pressed)
-            elif msg_type == MsgType.SCROLL:
-                dx, dy = decode_scroll(payload)
-                self._input.scroll(dx, dy)
-            elif msg_type == MsgType.CLIPBOARD:
-                text = decode_clipboard(payload)
-                self._handle_clipboard(text)
-            elif msg_type == MsgType.SETTINGS:
-                settings = decode_settings(payload)
-                self._apply_settings(settings)
-            elif msg_type == MsgType.HDMI_TOGGLE:
-                self.toggle_hdmi()
-            elif msg_type == MsgType.DISCONNECT:
-                self._emit_status("Client requested disconnect")
-                self._streaming = False
-            elif msg_type == MsgType.KEEPALIVE:
-                pass  # Just a ping, no action needed
-        except Exception as e:
-            log.debug(f"Error processing input {msg_type}: {e}")
+            self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._server_sock.bind((self._host, self._port))
+            self._server_sock.listen(5)
+            self._server_sock.settimeout(1.0)  # periodic timeout to check _running
 
-    def _handle_clipboard(self, text: str):
-        """Set clipboard text on the server (host) machine."""
-        try:
-            import pyperclip
-            pyperclip.copy(text)
-        except ImportError:
-            pass
-
-    def _apply_settings(self, settings: dict):
-        """Apply settings from client."""
-        if "quality" in settings and self._encoder:
-            self._encoder.update_quality(settings["quality"])
-        if "fps" in settings:
-            self.target_fps = settings["fps"]
-            self._frame_interval = 1.0 / self.target_fps
-        if "monitor" in settings:
-            self.monitor_idx = settings["monitor"]
-            if self._capture:
-                self._capture.update_monitor(self.monitor_idx)
-
-    def _stream_loop(self, client: socket.socket):
-        """Background thread: capture and send frames."""
-        last_frame_time = 0
-        self._fps_counter = 0
-        self._fps_timer = time.time()
-
-        while self._streaming and self._running:
-            now = time.time()
-            if now - last_frame_time < self._frame_interval:
-                # Sleep a tiny bit to avoid busy-waiting
-                time.sleep(max(0, self._frame_interval - (now - last_frame_time)) / 2)
-                continue
-
-            try:
-                if self._hdmi_mode and self._hdmi_cap:
-                    frame = self._hdmi_cap.read()
-                    if frame is None:
-                        continue
-                    # Convert BGR to BGRA for consistent handling
-                    frame_bgra = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)
-                elif self._capture:
-                    frame_bgra = self._capture.capture()
-                else:
-                    continue
-
-                encoded, w, h = self._encoder.encode(frame_bgra)
-                if not encoded:
-                    continue
-
-                video_payload = encode_video_frame(encoded, "jpeg", w, h)
-                msg = encode_msg(MsgType.VIDEO_FRAME, video_payload)
+            while self._running:
                 try:
-                    client.sendall(msg)
+                    sock, addr = self._server_sock.accept()
+                except socket.timeout:
+                    continue
                 except OSError:
                     break
 
-                self._fps_counter += 1
-                if self._fps_counter >= self.target_fps:
-                    elapsed = time.time() - self._fps_timer
-                    actual_fps = self._fps_counter / elapsed if elapsed > 0 else 0
-                    log.debug(f"Stream FPS: {actual_fps:.1f}")
-                    self._fps_counter = 0
-                    self._fps_timer = time.time()
+                # Wrap ServerSession
+                session = ServerSession(sock, addr, monitor=self._monitor,
+                                        virtual=False)
+                if self.on_client_connected:
+                    self.on_client_connected(addr)
+                session.start()
 
-                last_frame_time = now
-
-            except Exception as e:
-                log.debug(f"Stream error: {e}")
-                break
-
-    def _keepalive_loop(self, client: socket.socket):
-        """Send periodic keepalive pings."""
-        while self._streaming and self._running:
-            time.sleep(5)
-            try:
-                client.sendall(encode_msg(MsgType.KEEPALIVE))
-            except OSError:
-                break
-
-    def _recv_exact(self, sock: socket.socket, size: int) -> Optional[bytes]:
-        """Receive exactly `size` bytes."""
-        chunks = []
-        received = 0
-        while received < size:
-            try:
-                chunk = sock.recv(size - received)
-            except OSError:
-                return None
-            if not chunk:
-                return None
-            chunks.append(chunk)
-            received += len(chunk)
-        return b"".join(chunks)
+            print(f"[server] DeskctrlServer accept loop ended ({self._host}:{self._port})")
+        except Exception as e:
+            if self.on_status:
+                self.on_status(f"Server error: {e}")
+        finally:
+            if self._server_sock:
+                try:
+                    self._server_sock.close()
+                except Exception:
+                    pass

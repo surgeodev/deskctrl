@@ -1,144 +1,138 @@
-"""Network protocol for deskctrl.
+"""
+Binary protocol over TCP.
 
-Binary framing: [4 bytes message type][4 bytes payload length][N bytes payload]
+Frame layout:
+  [1 byte: msg_type] [4 bytes: payload_length (big-endian)] [N bytes: payload]
 
 Message types:
-    HELLO / HELLO_ACK    -- Handshake
-    VIDEO_FRAME           -- JPEG-encoded frame (or H.264 NAL)
-    POINTER_MOVE          -- Mouse move (x, y as f32)
-    POINTER_BUTTON        -- Mouse button (button id, pressed bool, x, y)
-    KEY_EVENT             -- Keyboard key (keysym as u32, pressed bool)
-    SCROLL                -- Scroll (dx, dy as f32)
-    CLIPBOARD             -- Clipboard text (utf-8)
-    RESOLUTION            -- Screen resolution (width, height as u32)
-    SETTINGS              -- Encoding settings
-    HDMI_TOGGLE           -- Toggle HDMI capture mode
-    DISCONNECT            -- Graceful disconnect
-    KEEPALIVE             -- Ping/pong keepalive
+  SETTINGS    0x01  JSON-encoded dict (resolution, monitor, fps, etc.)
+  FRAME       0x02  Raw JPEG/PNG bytes for a video frame
+  INPUT_KEY   0x03  Keyboard event: [1 byte: pressed] [4 bytes: keysym big-endian]
+  INPUT_MOUSE 0x04  Mouse event: [1 byte: event_type] [payload varies]
+  CLIPBOARD   0x05  Clipboard sync: UTF-8 text
+  PING        0x06  Keep-alive (empty payload)
+  PONG        0x07  Keep-alive reply (empty payload)
+  HELLO       0x08  Handshake for monitor-control clients (UTF-8 version string)
+  HELLO_ACK   0x09  Client acknowledges HELLO
+  RESOLUTION  0x0A  Screen dimensions packed as >II (width, height)
+  DISCONNECT  0x0C  Clean disconnection
+
+Mouse event_type sub-codes (first byte of INPUT_MOUSE payload):
+  MOUSE_MOVE   0x01  [4 bytes: x] [4 bytes: y]  (signed big-endian int32)
+  MOUSE_PRESS  0x02  [4 bytes: x] [4 bytes: y] [1 byte: button]
+  MOUSE_RELEASE 0x03 [4 bytes: x] [4 bytes: y] [1 byte: button]
+  MOUSE_SCROLL 0x04  [4 bytes: dx] [4 bytes: dy]  (signed big-endian int32)
 """
 
-import struct
 import json
-from enum import IntEnum
-from typing import Optional
+import struct
+import socket
+
+MSG_SETTINGS    = 0x01
+MSG_FRAME       = 0x02
+MSG_INPUT_KEY   = 0x03
+MSG_INPUT_MOUSE = 0x04
+MSG_CLIPBOARD   = 0x05
+MSG_PING        = 0x06
+MSG_PONG        = 0x07
+MSG_HELLO       = 0x08  # Handshake: server announces itself to monitor clients
+MSG_HELLO_ACK   = 0x09  # Client acknowledges HELLO
+MSG_RESOLUTION  = 0x0A  # Screen dimensions (width, height as >II)
+MSG_DISCONNECT  = 0x0C  # Clean disconnection
+
+MOUSE_MOVE    = 0x01
+MOUSE_PRESS   = 0x02
+MOUSE_RELEASE = 0x03
+MOUSE_SCROLL  = 0x04
+
+HEADER_SIZE = 5  # 1 (type) + 4 (length)
 
 
-# ---- Message Types --------------------------------------------------------------------------------------------------------------------
-
-class MsgType(IntEnum):
-    HELLO        = 0x01
-    HELLO_ACK    = 0x02
-    VIDEO_FRAME  = 0x10
-    POINTER_MOVE = 0x20
-    POINTER_BUTTON = 0x21
-    KEY_EVENT    = 0x22
-    SCROLL       = 0x23
-    CLIPBOARD    = 0x30
-    RESOLUTION   = 0x40
-    SETTINGS     = 0x50
-    HDMI_TOGGLE  = 0x60
-    DISCONNECT   = 0xF0
-    KEEPALIVE    = 0xFF
+def send_message(sock: socket.socket, msg_type: int, payload: bytes) -> None:
+    header = struct.pack(">BI", msg_type, len(payload))
+    sock.sendall(header + payload)
 
 
-# ---- Frame Header ---------------------------------------------------------------------------------------------------------------------
-
-HEADER_FMT = "!II"   # network byte order: type (u32), length (u32)
-HEADER_SIZE = struct.calcsize(HEADER_FMT)  # 8 bytes
-
-
-def encode_msg(msg_type: MsgType, payload: bytes = b"") -> bytes:
-    """Encode a message with type + length prefix."""
-    return struct.pack(HEADER_FMT, msg_type.value, len(payload)) + payload
-
-
-def decode_header(data: bytes) -> tuple:
-    """Decode header from raw bytes. Returns (type_value, payload_length)."""
-    t, length = struct.unpack(HEADER_FMT, data)
-    return MsgType(t), length
+def recv_exactly(sock: socket.socket, n: int) -> bytes:
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise ConnectionError("Socket closed unexpectedly")
+        buf += chunk
+    return buf
 
 
-# ---- Payload Helpers ----------------------------------------------------------------------------------------------------------------
-
-def encode_hello(version: str) -> bytes:
-    return json.dumps({"version": version}).encode("utf-8")
-
-
-def decode_hello(payload: bytes) -> dict:
-    return json.loads(payload.decode("utf-8"))
-
-
-def encode_pointer_move(x: float, y: float, relative: bool = False) -> bytes:
-    flags = 1 if relative else 0
-    return struct.pack("!Bff", flags, x, y)
+def recv_message(sock: socket.socket):
+    """
+    Blocking receive. Returns (msg_type: int, payload: bytes).
+    Raises ConnectionError if socket closes.
+    """
+    header = recv_exactly(sock, HEADER_SIZE)
+    msg_type, length = struct.unpack(">BI", header)
+    payload = recv_exactly(sock, length) if length else b""
+    return msg_type, payload
 
 
-def decode_pointer_move(payload: bytes) -> tuple:
-    flags, x, y = struct.unpack("!Bff", payload)
-    return x, y, bool(flags)
-
-
-def encode_pointer_button(button: int, pressed: bool, x: float, y: float) -> bytes:
-    return struct.pack("!B?ff", button, pressed, x, y)
-
-
-def decode_pointer_button(payload: bytes) -> tuple:
-    button, pressed, x, y = struct.unpack("!B?ff", payload)
-    return button, pressed, x, y
-
-
-def encode_key_event(keysym: int, keycode: int, pressed: bool) -> bytes:
-    return struct.pack("!II?", keysym, keycode, pressed)
-
-
-def decode_key_event(payload: bytes) -> tuple:
-    keysym, keycode, pressed = struct.unpack("!II?", payload)
-    return keysym, keycode, pressed
-
-
-def encode_scroll(dx: float, dy: float) -> bytes:
-    return struct.pack("!ff", dx, dy)
-
-
-def decode_scroll(payload: bytes) -> tuple:
-    return struct.unpack("!ff", payload)
-
-
-def encode_clipboard(text: str) -> bytes:
-    return text.encode("utf-8")
-
-
-def decode_clipboard(payload: bytes) -> str:
-    return payload.decode("utf-8")
-
-
-def encode_resolution(width: int, height: int) -> bytes:
-    return struct.pack("!II", width, height)
-
-
-def decode_resolution(payload: bytes) -> tuple:
-    return struct.unpack("!II", payload)
-
-
-def encode_settings(**kwargs) -> bytes:
-    return json.dumps(kwargs).encode("utf-8")
+def encode_settings(settings: dict) -> bytes:
+    return json.dumps(settings).encode("utf-8")
 
 
 def decode_settings(payload: bytes) -> dict:
     return json.loads(payload.decode("utf-8"))
 
 
-# ---- Video Frame helpers --------------------------------------------------------------------------------------------------------
+def encode_key(pressed: bool, keysym: int) -> bytes:
+    return struct.pack(">BI", int(pressed), keysym)
 
-def encode_video_frame(frame_data: bytes, frame_type: str = "jpeg",
-                        width: int = 0, height: int = 0,
-                        pts: int = 0) -> bytes:
-    """Encode video frame with metadata header before raw data."""
-    # Extended header: frame_type(1B) + width(2B) + height(2B) + pts(8B)
-    ft = 0  # 0=jpeg, 1=h264, 2=h265
-    if frame_type == "h264":
-        ft = 1
-    elif frame_type == "h265":
-        ft = 2
-    meta = struct.pack("!BHHQ", ft, width, height, pts)
-    return meta + frame_data
+
+def encode_hello(version: str) -> bytes:
+    return version.encode("utf-8")
+
+
+def decode_hello(payload: bytes) -> str:
+    return payload.decode("utf-8")
+
+
+def encode_resolution(width: int, height: int) -> bytes:
+    return struct.pack(">II", width, height)
+
+
+def decode_resolution(payload: bytes):
+    return struct.unpack(">II", payload)
+
+
+def decode_key(payload: bytes):
+    pressed_int, keysym = struct.unpack(">BI", payload)
+    return bool(pressed_int), keysym
+
+
+def encode_mouse_move(x: int, y: int) -> bytes:
+    return struct.pack(">Bii", MOUSE_MOVE, x, y)
+
+
+def encode_mouse_button(event_type: int, x: int, y: int, button: int) -> bytes:
+    return struct.pack(">BiiB", event_type, x, y, button)
+
+
+def encode_mouse_scroll(dx: int, dy: int) -> bytes:
+    return struct.pack(">Bii", MOUSE_SCROLL, dx, dy)
+
+
+def decode_mouse(payload: bytes):
+    """
+    Returns dict with keys depending on sub-type.
+    """
+    sub = payload[0]
+    if sub == MOUSE_MOVE:
+        x, y = struct.unpack(">ii", payload[1:9])
+        return {"type": "move", "x": x, "y": y}
+    elif sub in (MOUSE_PRESS, MOUSE_RELEASE):
+        x, y, button = struct.unpack(">iiB", payload[1:10])
+        action = "press" if sub == MOUSE_PRESS else "release"
+        return {"type": action, "x": x, "y": y, "button": button}
+    elif sub == MOUSE_SCROLL:
+        dx, dy = struct.unpack(">ii", payload[1:9])
+        return {"type": "scroll", "dx": dx, "dy": dy}
+    else:
+        return {"type": "unknown", "sub": sub}

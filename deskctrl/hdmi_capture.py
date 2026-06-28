@@ -3,10 +3,22 @@
 import logging
 from typing import Optional
 
-import cv2
-import numpy as np
-
 from .platform import IS_WINDOWS, IS_LINUX, IS_MACOS, hdmi_devices
+
+# Lazy imports: cv2 (opencv-python-headless) is an optional dependency.
+# Functions that need cv2 import it locally.
+_cv2_available = False
+_np_available = False
+try:
+    import cv2 as _cv2
+    _cv2_available = True
+except ImportError:
+    pass
+try:
+    import numpy as _np
+    _np_available = True
+except ImportError:
+    pass
 
 log = logging.getLogger(__name__)
 
@@ -14,11 +26,11 @@ log = logging.getLogger(__name__)
 def list_capture_devices() -> list[dict]:
     """List available HDMI/USB capture devices."""
     devices = hdmi_devices()
-    if not devices:
+    if not devices and _cv2_available:
         # Fallback: try OpenCV enumeration
         for i in range(10):
             try:
-                cap = cv2.VideoCapture(i)
+                cap = _cv2.VideoCapture(i)
                 if cap.isOpened():
                     name = f"Device {i}"
                     ret, frame = cap.read()
@@ -52,7 +64,7 @@ class HDMIFrameSource:
         self.target_width = width
         self.target_height = height
         self.target_fps = fps
-        self._cap: Optional[cv2.VideoCapture] = None
+        self._cap: Optional[object] = None
         self._actual_width = 0
         self._actual_height = 0
         self._actual_fps = 0.0
@@ -67,6 +79,11 @@ class HDMIFrameSource:
 
     def open(self) -> bool:
         """Open the capture device."""
+        if not _cv2_available:
+            log.error("opencv-python-headless not installed")
+            return False
+
+        cv2 = _cv2
         path = self.device_path
         try:
             if IS_LINUX:
@@ -113,7 +130,7 @@ class HDMIFrameSource:
             log.error(f"Error opening capture device: {e}")
             return False
 
-    def read(self) -> Optional[np.ndarray]:
+    def read(self) -> Optional[object]:
         """Read a frame from the capture device. Returns BGR numpy array."""
         if not self._cap:
             return None
