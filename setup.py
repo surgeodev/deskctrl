@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="deskctrl",
-    version="0.2.3",
+    version="2.0.1",
     description="Remote desktop controller -- cross-platform, like scrcpy for PCs",
     long_description=open("README.md", encoding="utf-8").read() if __import__("os").path.exists("README.md") else "",
     long_description_content_type="text/markdown",
@@ -27,7 +27,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "deskctrl=deskctrl.cli:cli",
+            "deskctrl=deskctrl.cli:main",
         ],
     },
     classifiers=[

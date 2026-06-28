@@ -33,12 +33,19 @@ if _PYNPUT_AVAILABLE:
     }
 
 
+# Reverse mapping: X11 keysym → pynput Key
+# PYNPUT_SPECIAL_KEYSYMS maps pynput Key → X11 keysym (wrong direction for lookup)
+_X11_TO_PYNPUT: dict[int, "KbKey | KeyCode"] = {}
+if _PYNPUT_AVAILABLE:
+    _X11_TO_PYNPUT = {v: k for k, v in PYNPUT_SPECIAL_KEYSYMS.items()}
+
+
 def _keysym_to_pynput(keysym: int):
     """
     Convert an X11 keysym to a pynput Key or KeyCode.
     """
-    if keysym in PYNPUT_SPECIAL_KEYSYMS:
-        return PYNPUT_SPECIAL_KEYSYMS[keysym]
+    if keysym in _X11_TO_PYNPUT:
+        return _X11_TO_PYNPUT[keysym]
     if 0x20 <= keysym <= 0x10FFFF:
         return KeyCode.from_char(chr(keysym))
     return None
