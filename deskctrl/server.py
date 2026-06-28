@@ -428,6 +428,12 @@ class DeskctrlServer:
         # Initialize components
         self._encoder = JPEGEncoder(self.jpeg_quality, self.target_fps)
         self._input = InputSimulator()
+        # Reset Windows direct input modifier state for fresh connection
+        try:
+            from . import win32_input
+            win32_input.reset()
+        except Exception:
+            pass
         if not self._hdmi_mode:
             try:
                 self._capture = ScreenCapture(self.monitor_idx)

@@ -4,6 +4,14 @@ Bypasses pynput for keyboard events to work around issues with
 modifier keys (Shift, Ctrl, Alt) not registering in games that
 use raw input (GLFW, etc.).
 
+Strategy:
+- Character keys (keysym < 256): send via Unicode input for reliability.
+  Track Shift/Caps state locally to apply correct case since VK
+  modifier state may not reach all applications via SendInput.
+- Modifier keys: send VK code for raw input consumers AND track
+  state locally for character case conversion.
+- Special keys (F-keys, arrows, etc.): send VK code.
+
 Usage:
     from deskctrl import win32_input
     if win32_input.is_available():
@@ -13,81 +21,85 @@ Usage:
 
 import ctypes
 import ctypes.wintypes
-from typing import Optional
 
 # Constants
 KEYEVENTF_EXTENDEDKEY = 0x0001
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
-KEYEVENTF_SCANCODE = 0x0008
 
-INPUT_MOUSE = 0
 INPUT_KEYBOARD = 1
-INPUT_HARDWARE = 2
 
 # Map deskctrl keysym → Windows VK code
 KEYSYM_TO_VK = {
-    # Special keys
-    0xFF08: 0x08,  # BackSpace
-    0xFF09: 0x09,  # Tab
-    0xFF0D: 0x0D,  # Return
-    0xFF1B: 0x1B,  # Escape
-    0xFF50: 0x24,  # Home
-    0xFF51: 0x25,  # Left
-    0xFF52: 0x26,  # Up
-    0xFF53: 0x27,  # Right
-    0xFF54: 0x28,  # Down
-    0xFF55: 0x21,  # Page Up
-    0xFF56: 0x22,  # Page Down
-    0xFF57: 0x23,  # End
-    0xFF63: 0x2D,  # Insert
-    0xFFFF: 0x2E,  # Delete
-    0xFF61: 0x2C,  # Print Screen
-    0xFF14: 0x91,  # Scroll Lock
-    0xFF13: 0x13,  # Pause
-    0xFF7F: 0x90,  # Num Lock
-    0xFFE5: 0x14,  # Caps Lock
-    0xFF67: 0x5D,  # Menu
-    0xFE03: 0xA5,  # AltGr (RMenu)
+    0xFF08: 0x08, 0xFF09: 0x09, 0xFF0D: 0x0D, 0xFF1B: 0x1B,
+    0xFF50: 0x24, 0xFF51: 0x25, 0xFF52: 0x26, 0xFF53: 0x27,
+    0xFF54: 0x28, 0xFF55: 0x21, 0xFF56: 0x22, 0xFF57: 0x23,
+    0xFF63: 0x2D, 0xFFFF: 0x2E, 0xFF61: 0x2C,
+    0xFF14: 0x91, 0xFF13: 0x13, 0xFF7F: 0x90, 0xFFE5: 0x14,
+    0xFF67: 0x5D, 0xFE03: 0xA5,
     # F-keys
-    0xFFBE: 0x70, 0xFFBF: 0x71, 0xFFC0: 0x72,
-    0xFFC1: 0x73, 0xFFC2: 0x74, 0xFFC3: 0x75,
-    0xFFC4: 0x76, 0xFFC5: 0x77, 0xFFC6: 0x78,
-    0xFFC7: 0x79, 0xFFC8: 0x7A, 0xFFC9: 0x7B,
+    0xFFBE: 0x70, 0xFFBF: 0x71, 0xFFC0: 0x72, 0xFFC1: 0x73,
+    0xFFC2: 0x74, 0xFFC3: 0x75, 0xFFC4: 0x76, 0xFFC5: 0x77,
+    0xFFC6: 0x78, 0xFFC7: 0x79, 0xFFC8: 0x7A, 0xFFC9: 0x7B,
     # Modifiers
-    0xFFE1: 0xA0,  # Shift L
-    0xFFE2: 0xA1,  # Shift R
-    0xFFE3: 0xA2,  # Ctrl L
-    0xFFE4: 0xA3,  # Ctrl R
-    0xFFE9: 0xA4,  # Alt L
-    0xFFEA: 0xA5,  # Alt R
-    0xFFE7: 0x5B,  # Meta/Super L (Win)
-    0xFFE8: 0x5C,  # Meta/Super R (Win)
-    0xFFEB: 0x5B,  # Super L
-    0xFFEC: 0x5C,  # Super R
+    0xFFE1: 0xA0, 0xFFE2: 0xA1, 0xFFE3: 0xA2, 0xFFE4: 0xA3,
+    0xFFE9: 0xA4, 0xFFEA: 0xA5, 0xFFE7: 0x5B, 0xFFE8: 0x5C,
+    0xFFEB: 0x5B, 0xFFEC: 0x5C,
 }
 
-# Keys that need the EXTENDEDKEY flag
-EXTENDED_KEYS = {
-    0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,  # Nav block
-    0x2C, 0x2D, 0x2E,  # PrintScreen, Insert, Delete
-    0x5B, 0x5C, 0x5D,  # Win keys, Menu
-    0x90, 0x91,  # NumLock, ScrollLock
-    0xA3, 0xA5,  # RCtrl, RAlt
-}
+# VK codes that need KEYEVENTF_EXTENDEDKEY
+EXTENDED_VK = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+               0x2C, 0x2D, 0x2E, 0x5B, 0x5C, 0x5D, 0x90, 0x91,
+               0xA3, 0xA5}
 
-_LIB: Optional[ctypes.CDLL] = None
+# Keysyms that affect character case
+_SHIFT_KEYS = frozenset({0xFFE1, 0xFFE2})
+_CAPSLOCK_KEY = 0xFFE5
+
+# --- Internal modifier state tracked locally ---
+# (VK modifier state from SendInput may not propagate to all apps)
+_shift_down = False
+_caps_on = False
+
+_initialized = False
+_user32 = None
 
 
-def _get_lib():
-    global _LIB
-    if _LIB is not None:
-        return _LIB
+def _ensure_init():
+    """Initialize ctypes function bindings on first use."""
+    global _initialized, _user32
+    if _initialized:
+        return _user32 is not None
+    _initialized = True
     try:
-        _LIB = ctypes.windll.user32
+        lib = ctypes.windll.user32
     except AttributeError:
-        return None
-    return _LIB
+        return False
+
+    # SendInput(UINT cInputs, LPINPUT pInputs, int cbSize)
+    lib.SendInput.argtypes = [
+        ctypes.wintypes.UINT,
+        ctypes.c_void_p,
+        ctypes.c_int,
+    ]
+    lib.SendInput.restype = ctypes.wintypes.UINT
+
+    # MapVirtualKeyW(UINT uCode, UINT uMapType)
+    lib.MapVirtualKeyW.argtypes = [
+        ctypes.wintypes.UINT,
+        ctypes.wintypes.UINT,
+    ]
+    lib.MapVirtualKeyW.restype = ctypes.wintypes.UINT
+
+    _user32 = lib
+    return True
+
+
+def reset():
+    """Reset internal modifier state. Call when connection starts."""
+    global _shift_down, _caps_on
+    _shift_down = False
+    _caps_on = False
 
 
 class KEYBDINPUT(ctypes.Structure):
@@ -100,108 +112,85 @@ class KEYBDINPUT(ctypes.Structure):
     ]
 
 
-class INPUT_union(ctypes.Union):
+class INPUT_STRUCT(ctypes.Structure):
     _fields_ = [
+        ("type", ctypes.wintypes.DWORD),
         ("ki", KEYBDINPUT),
     ]
 
 
-class INPUT(ctypes.Structure):
-    _fields_ = [
-        ("type", ctypes.wintypes.DWORD),
-        ("value", INPUT_union),
-    ]
-
-
-def _send_keyboard(vk: int, scan: int, flags: int) -> bool:
-    """Send a single keyboard input via SendInput."""
-    lib = _get_lib()
-    if lib is None:
-        return False
-    inp = INPUT(
+def _send(vk, scan, flags):
+    inp = INPUT_STRUCT(
         type=INPUT_KEYBOARD,
-        value=INPUT_union(
-            ki=KEYBDINPUT(
-                wVk=vk,
-                wScan=scan,
-                dwFlags=flags,
-                time=0,
-                dwExtraInfo=0,
-            )
-        ),
+        ki=KEYBDINPUT(wVk=vk, wScan=scan, dwFlags=flags, time=0, dwExtraInfo=0),
     )
-    result = lib.SendInput(
-        1,
-        ctypes.byref(inp),
-        ctypes.sizeof(INPUT),
-    )
-    return result == 1
+    return _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT_STRUCT)) == 1
 
 
-def _vk_to_scan(vk: int) -> int:
-    """Convert VK code to scan code using MapVirtualKey."""
-    lib = _get_lib()
-    if lib is None:
-        return 0
-    return lib.MapVirtualKeyW(vk, 0)  # MAPVK_VK_TO_VSC
+def _send_vk(vk, pressed):
+    flags = KEYEVENTF_KEYUP if not pressed else 0
+    if vk in EXTENDED_VK:
+        flags |= KEYEVENTF_EXTENDEDKEY
+    scan = _user32.MapVirtualKeyW(vk, 0)
+    return _send(vk, scan, flags)
 
 
-def _char_to_vk(char: str):
-    """Convert a character to (VK, shift_bit) using VkKeyScanW.
-
-    Returns (vk, needs_shift) or (0, 0) if not found.
-    """
-    lib = _get_lib()
-    if lib is None or not char:
-        return (0, 0)
-    # VkKeyScanW takes a wchar_t (single character)
-    result = lib.VkKeyScanW(ctypes.c_wchar(char))
-    if result == -1:
-        return (0, 0)
-    vk = result & 0xFF
-    shift = (result >> 8) & 0xFF
-    return (vk, shift)
+def _send_unicode(char, pressed):
+    flags = KEYEVENTF_UNICODE
+    if not pressed:
+        flags |= KEYEVENTF_KEYUP
+    return _send(0, ord(char), flags)
 
 
 def key_event(keysym: int, pressed: bool) -> bool:
-    """Send a complete key event for a deskctrl keysym.
+    """Send a key event for a deskctrl keysym.
 
-    Handles special keys, modifiers, and ASCII/Latin-1 characters.
-    Returns True if the keysym was handled, False if unknown.
+    Returns True if handled, False if keysym is unknown.
     """
-    lib = _get_lib()
-    if lib is None:
+    global _shift_down, _caps_on
+    if not _ensure_init():
         return False
 
-    action = 0 if pressed else KEYEVENTF_KEYUP
-
-    # --- ASCII / Latin-1 character (keysym 1-255) ---
+    # ── Character keys: Unicode input with local case tracking ──
     if 0 < keysym < 256:
         char = chr(keysym)
-        vk, shift_bit = _char_to_vk(char)
-        if vk:
-            # Send the VK code WITHOUT shift modifier flag.
-            # The separately-sent shift modifier key handles uppercasing.
-            scan = _vk_to_scan(vk)
-            return _send_keyboard(vk, scan, action)
-        else:
-            # Fallback: send as Unicode
-            flags = KEYEVENTF_UNICODE | action
-            return _send_keyboard(0, ord(char), flags)
+        # a-z (0x61-0x7A): apply shift/caps
+        if 0x61 <= keysym <= 0x7A:
+            shifted = _shift_down ^ _caps_on  # XOR: shift inverts caps
+            if shifted:
+                char = chr(keysym - 0x20)  # → uppercase
+        # A-Z (0x41-0x5A): client may send uppercase too; normalize
+        elif 0x41 <= keysym <= 0x5A:
+            shifted = _shift_down ^ _caps_on
+            if not shifted:
+                char = chr(keysym + 0x20)  # → lowercase
+        _send_unicode(char, pressed)
+        return True
 
-    # --- Known special / modifier keys ---
+    # ── Shift keys: track locally + send VK ──
+    if keysym in _SHIFT_KEYS:
+        _shift_down = pressed
+        vk = KEYSYM_TO_VK[keysym]
+        _send_vk(vk, pressed)
+        return True
+
+    # ── Caps Lock: toggle + send VK ──
+    if keysym == _CAPSLOCK_KEY:
+        if pressed:
+            _caps_on = not _caps_on
+        vk = KEYSYM_TO_VK[keysym]
+        _send_vk(vk, pressed)
+        return True
+
+    # ── Other special/modifier keys: send VK ──
     vk = KEYSYM_TO_VK.get(keysym)
     if vk is not None:
-        flags = action
-        if vk in EXTENDED_KEYS:
-            flags |= KEYEVENTF_EXTENDEDKEY
-        scan = _vk_to_scan(vk)
-        return _send_keyboard(vk, scan, flags)
+        _send_vk(vk, pressed)
+        return True
 
-    # Unknown keysym
     return False
 
 
 def is_available() -> bool:
-    """Check if this module is usable (Windows only)."""
-    return _get_lib() is not None
+    """Check if this module works on this platform (Windows only)."""
+    return _ensure_init()
