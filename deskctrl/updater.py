@@ -82,18 +82,32 @@ def download_asset(dest_dir: str, tag: str, asset_name: str) -> Optional[str]:
 
 
 def _replace_exe_via_batch(exe_src: str) -> bool:
-    """Replace current PyInstaller exe via a background batch script."""
+    """Replace current PyInstaller exe via a background batch script.
+
+    The batch script runs after this process exits. To avoid the temp dir
+    being cleaned up before the copy, we first move the new exe to a
+    persistent location next to the current exe.
+    """
     current_exe = sys.executable
+    pending_exe = current_exe + ".v2"  # persistent staging path
+    try:
+        shutil.copy2(exe_src, pending_exe)
+    except Exception as e:
+        print(f"  Staging new exe failed: {e}")
+        return False
+
     batch = f"""@echo off
 timeout /t 2 /nobreak >nul
-copy /y "{exe_src}" "{current_exe}" >nul
+copy /y "{pending_exe}" "{current_exe}" >nul
 if errorlevel 1 (
   echo Update failed: could not copy to {current_exe}
   echo Try running as Administrator, or download manually:
   echo {RELEASES_URL}
+  del "{pending_exe}" >nul 2>&1
   pause
   exit /b 1
 )
+del "{pending_exe}" >nul 2>&1
 start "" "{current_exe}" --version
 del "%~f0"
 """
