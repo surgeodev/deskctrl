@@ -29,5 +29,5 @@ if len(sys.argv) <= 1:
     from deskctrl.gui import launch_gui
     launch_gui()
 else:
-    from deskctrl.cli import cli
-    cli()
+    from deskctrl.cli import main
+    main()
