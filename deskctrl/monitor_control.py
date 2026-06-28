@@ -225,6 +225,9 @@ class MonitorControlEngine:
         self._mouse_listener = None
         self._keyboard_listener = None
         self._reconnect_threads: List[threading.Thread] = []
+        self._event_count = 0           # how many mouse events received
+        self._polling_thread = None     # xdotool fallback polling thread
+        self._key_listener_ok = False   # whether keyboard listener works
 
         # ---- Callbacks -------------------------------------------------------------------------------------------------
         self.on_status: Optional[Callable[[str], None]] = None
@@ -279,6 +282,10 @@ class MonitorControlEngine:
         self._mouse_listener.start()
         self._keyboard_listener.start()
 
+        # On Wayland, pynput listeners don't receive global mouse events.
+        # Start a polling fallback using xdotool (via XWayland) if available.
+        self._start_polling_fallback()
+
         return True
 
     def stop(self):
@@ -292,6 +299,7 @@ class MonitorControlEngine:
         if self._keyboard_listener:
             self._keyboard_listener.stop()
             self._keyboard_listener = None
+        self._polling_thread = None  # thread is daemon, will exit with _running
 
         with self._conn_lock:
             for direction, (sock, _) in list(self._connections.items()):
@@ -302,6 +310,58 @@ class MonitorControlEngine:
             self._connections.clear()
 
         self._emit("Monitor Control stopped")
+
+    # ── Mouse polling fallback (Wayland) ──────────────────────────────────
+
+    def _start_polling_fallback(self):
+        """Start xdotool-based mouse polling if pynput doesn't receive events.
+
+        On Wayland, pynput's mouse listener cannot track global cursor
+        position. We fall back to polling xdotool via XWayland.
+        """
+        if not self._running:
+            return
+
+        # Check if xdotool is available
+        import subprocess, shutil
+        if not shutil.which("xdotool"):
+            return
+
+        # Give pynput a moment to deliver events; if none arrive, start polling
+        def _check():
+            import time
+            time.sleep(1.5)
+            if self._event_count == 0 and self._running:
+                self._emit("? pynput mouse listener not receiving events "
+                           "(Wayland?) — falling back to xdotool polling")
+                self._polling_thread = threading.Thread(
+                    target=self._poll_mouse, daemon=True,
+                    name="mc-xdotool",
+                )
+                self._polling_thread.start()
+
+        t = threading.Thread(target=_check, daemon=True, name="mc-pollcheck")
+        t.start()
+
+    def _poll_mouse(self):
+        """Periodically read mouse position via xdotool."""
+        import subprocess, time
+        while self._running:
+            try:
+                result = subprocess.run(
+                    ["xdotool", "getmouselocation", "--shell"],
+                    capture_output=True, timeout=1, text=True,
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split("\n"):
+                        if line.startswith("X="):
+                            x = int(line[2:])
+                        elif line.startswith("Y="):
+                            y = int(line[2:])
+                    self._on_mouse_move(x, y)
+            except Exception:
+                pass
+            time.sleep(1 / 60)  # ~60 fps
 
     # ???????????????????????????????????????????????????????????????????
     # Connection management
@@ -378,6 +438,7 @@ class MonitorControlEngine:
     def _on_mouse_move(self, x: float, y: float):
         if not self._running:
             return
+        self._event_count += 1
         self._mouse_x, self._mouse_y = x, y
 
         with self._active_lock:
