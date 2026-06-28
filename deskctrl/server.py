@@ -136,9 +136,23 @@ class InputSimulator:
     def key_event(self, keysym: int, keycode: int, pressed: bool):
         if not self._keyboard:
             return
-        # Try using keycode / keysym via pynput
+
+        # On Windows, use direct SendInput via ctypes.
+        # This bypasses pynput's modifier tracking which doesn't properly
+        # set VK modifier state for games (GLFW/raw input).
+        try:
+            from .win32_input import is_available, key_event as send_key
+            if is_available():
+                handled = send_key(keysym, pressed)
+                log.debug(f"win32_input: keysym={hex(keysym)} pressed={pressed} → {handled}")
+                if handled:
+                    return
+                # Fall through to pynput if win32_input didn't handle it
+        except ImportError:
+            pass
+
+        # Fallback: use pynput
         from pynput.keyboard import Key, KeyCode
-        # Map common special keys
         special_map = {
             0xFF08: Key.backspace, 0xFF09: Key.tab, 0xFF0D: Key.enter,
             0xFF1B: Key.esc, 0xFF50: Key.home, 0xFF57: Key.end,
@@ -151,27 +165,27 @@ class InputSimulator:
             0xFFC1: Key.f4, 0xFFC2: Key.f5, 0xFFC3: Key.f6,
             0xFFC4: Key.f7, 0xFFC5: Key.f8, 0xFFC6: Key.f9,
             0xFFC7: Key.f10, 0xFFC8: Key.f11, 0xFFC9: Key.f12,
-            0xFFE1: KeyCode.from_vk(0xA0),  # VK_LSHIFT (used by games/GLFW)
+            0xFFE1: KeyCode.from_vk(0xA0),  # VK_LSHIFT
             0xFFE2: KeyCode.from_vk(0xA1),  # VK_RSHIFT
             0xFFE3: Key.ctrl_l, 0xFFE4: Key.ctrl_r,
             0xFFE5: Key.caps_lock,
             0xFFE9: Key.alt_l, 0xFFEA: Key.alt_r,
-            0xFFE7: Key.cmd, 0xFFE8: Key.cmd_r,  # Meta/Super
-            0xFFEB: Key.cmd, 0xFFEC: Key.cmd_r,  # Super (Windows key)
+            0xFFE7: Key.cmd, 0xFFE8: Key.cmd_r,
+            0xFFEB: Key.cmd, 0xFFEC: Key.cmd_r,
             0xFF67: Key.menu, 0xFE03: Key.alt_gr,
         }
         if keysym in special_map:
             key = special_map[keysym]
-            log.debug(f"keysym {hex(keysym)} → special {key}")
+            log.debug(f"pynput: keysym {hex(keysym)} → special {key}")
         elif keysym > 0 and keysym < 256:
             key = KeyCode.from_char(chr(keysym))
-            log.debug(f"keysym {keysym} ({chr(keysym)}) → KeyCode char")
+            log.debug(f"pynput: keysym {keysym} ({chr(keysym)}) → KeyCode char")
         else:
             key = KeyCode.from_vk(keycode) if keycode else None
-            log.debug(f"keysym {hex(keysym)} → from_vk({keycode}) = {key}")
+            log.debug(f"pynput: keysym {hex(keysym)} → from_vk({keycode}) = {key}")
 
         if key is None:
-            log.debug(f"  → no key, dropping")
+            log.debug(f"pynput: no key, dropping")
             return
 
         try:
