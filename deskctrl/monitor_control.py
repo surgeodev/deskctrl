@@ -30,44 +30,85 @@ from . import __version__
 # ── Self-contained protocol for monitor control connections ────────────────
 # This is a separate wire protocol (input-only, no video streaming).
 # Uses >II framing (8-byte header) independent of the main protocol.py.
+# The server sends HELLO first, then the client responds with HELLO_ACK,
+# then the server sends RESOLUTION, then they exchange input events.
 
-_MSG_HELLO        = 0x01
-_MSG_HELLO_ACK    = 0x02
-_MSG_POINTER_MOVE = 0x20
-_MSG_POINTER_BUTTON = 0x21
-_MSG_KEY_EVENT    = 0x22
-_MSG_SCROLL       = 0x23
-_MSG_RESOLUTION   = 0x40
-_MSG_KEEPALIVE    = 0xFF
-_HEADER_SIZE      = 8
+MSG_HELLO        = 0x01
+MSG_HELLO_ACK    = 0x02
+MSG_POINTER_MOVE = 0x20
+MSG_POINTER_BUTTON = 0x21
+MSG_KEY_EVENT    = 0x22
+MSG_SCROLL       = 0x23
+MSG_RESOLUTION   = 0x40
+MSG_KEEPALIVE    = 0xFF
+HEADER_SIZE      = 8
 
-def _encode_msg(mt: int, payload: bytes = b"") -> bytes:
+def encode_msg(mt: int, payload: bytes = b"") -> bytes:
     return struct.pack("!II", mt, len(payload)) + payload
 
-def _decode_header(data: bytes):
+def decode_header(data: bytes):
     return struct.unpack("!II", data)
 
-def _encode_hello(version: str) -> bytes:
+def encode_hello(version: str) -> bytes:
     return version.encode("utf-8")
 
-def _decode_hello(payload: bytes) -> str:
+def decode_hello(payload: bytes) -> str:
     return payload.decode("utf-8")
 
-def _decode_resolution(payload: bytes):
+def decode_resolution(payload: bytes):
     return struct.unpack("!II", payload)
 
-def _encode_pointer_move(x: float, y: float, relative: bool = False) -> bytes:
+def encode_pointer_move(x: float, y: float, relative: bool = False) -> bytes:
     flags = 0x01 if relative else 0x00
     return struct.pack("!Bii", flags, int(x), int(y))
 
-def _encode_pointer_button(button: int, pressed: bool, x: float, y: float) -> bytes:
+def encode_pointer_button(button: int, pressed: bool, x: float, y: float) -> bytes:
     return struct.pack("!BiiB", 0x01 if pressed else 0x00, int(x), int(y), button)
 
-def _encode_key_event(keysym: int, keycode: int, pressed: bool) -> bytes:
+def encode_key_event(keysym: int, keycode: int, pressed: bool) -> bytes:
     return struct.pack("!IIB", keysym, keycode, 0x01 if pressed else 0x00)
 
-def _encode_scroll(dx: float, dy: float) -> bytes:
+def encode_scroll(dx: float, dy: float) -> bytes:
     return struct.pack("!ii", int(dx), int(dy))
+
+# ── Server-side decode helpers (used by server.py monitor session) ────────
+
+def decode_pointer_move(payload: bytes) -> dict:
+    flags, x, y = struct.unpack("!Bii", payload)
+    return {"x": x, "y": y, "relative": bool(flags & 0x01)}
+
+def decode_pointer_button(payload: bytes) -> dict:
+    pressed, x, y, button = struct.unpack("!BiiB", payload)
+    return {"pressed": bool(pressed), "x": x, "y": y, "button": button}
+
+def decode_key_event(payload: bytes) -> dict:
+    keysym, keycode, pressed = struct.unpack("!IIB", payload)
+    return {"keysym": keysym, "keycode": keycode, "pressed": bool(pressed)}
+
+def decode_scroll(payload: bytes) -> dict:
+    dx, dy = struct.unpack("!ii", payload)
+    return {"dx": dx, "dy": dy}
+
+
+# Keep old private aliases for backward compat (used internally below)
+_MSG_HELLO = MSG_HELLO
+_MSG_HELLO_ACK = MSG_HELLO_ACK
+_MSG_POINTER_MOVE = MSG_POINTER_MOVE
+_MSG_POINTER_BUTTON = MSG_POINTER_BUTTON
+_MSG_KEY_EVENT = MSG_KEY_EVENT
+_MSG_SCROLL = MSG_SCROLL
+_MSG_RESOLUTION = MSG_RESOLUTION
+_MSG_KEEPALIVE = MSG_KEEPALIVE
+_HEADER_SIZE = HEADER_SIZE
+_encode_msg = encode_msg
+_decode_header = decode_header
+_encode_hello = encode_hello
+_decode_hello = decode_hello
+_decode_resolution = decode_resolution
+_encode_pointer_move = encode_pointer_move
+_encode_pointer_button = encode_pointer_button
+_encode_key_event = encode_key_event
+_encode_scroll = encode_scroll
 
 log = logging.getLogger(__name__)
 

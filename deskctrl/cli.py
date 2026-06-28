@@ -105,11 +105,17 @@ def cmd_extend(address: str, monitor: int, width: int, height: int):
               help="Target frames per second.")
 @click.option("--discovery/--no-discovery", default=True,
               help="Advertise server via mDNS (LAN auto-discovery).")
+@click.option("--monitor-mode", is_flag=True, default=False,
+              help="Monitor-control protocol (input-only, for `deskctrl monitor` clients).")
 def cmd_serve(host: str, port: int, monitor: int, virtual: bool,
-              quality: int, fps: int, discovery: bool):
+              quality: int, fps: int, discovery: bool,
+              monitor_mode: bool):
     """Start the deskctrl server (the machine being controlled).
 
     Captures the screen and streams it to connected clients.
+
+    Use --monitor-mode for the input-only protocol used by `deskctrl monitor`
+    (Barrier/Synergy-like cursor sharing, no video streaming).
     """
     from .server import serve
 
@@ -123,7 +129,8 @@ def cmd_serve(host: str, port: int, monitor: int, virtual: bool,
         except Exception as e:
             log.warning(f"Discovery not available: {e}")
 
-    serve(host=host, port=port, monitor=monitor, virtual=virtual)
+    serve(host=host, port=port, monitor=monitor, virtual=virtual,
+          monitor_mode=monitor_mode)
 
     if discovery_service:
         discovery_service.stop()
@@ -283,7 +290,7 @@ def cmd_monitor(config, add, remove, no_start, list_only, margin):
                 sys.exit(1)
         else:
             host_val = host_part
-            port_val = 5900
+            port_val = 5830  # monitor protocol default port
         if direction not in ("left", "right", "top", "bottom"):
             click.echo(f"Error: direction must be left|right|top|bottom", err=True)
             sys.exit(1)
