@@ -145,6 +145,10 @@ def _send_unicode(char, pressed):
 def key_event(keysym: int, pressed: bool) -> bool:
     """Send a key event for a deskctrl keysym.
 
+    Only handles character keys (keysym < 256) via Unicode input
+    with local shift/caps tracking. Modifier keys and special keys
+    are NOT handled here — they must be handled by the caller (pynput).
+
     Returns True if handled, False if keysym is unknown.
     """
     global _shift_down, _caps_on
@@ -167,26 +171,16 @@ def key_event(keysym: int, pressed: bool) -> bool:
         _send_unicode(char, pressed)
         return True
 
-    # ── Shift keys: track locally + send VK ──
+    # ── Modifier + special keys: NOT handled here ---
+    # These must be sent via pynput by the caller.
+    # We only update our local shift/caps tracking state.
     if keysym in _SHIFT_KEYS:
         _shift_down = pressed
-        vk = KEYSYM_TO_VK[keysym]
-        _send_vk(vk, pressed)
-        return True
+        return False  # not handled — caller must send via pynput
 
-    # ── Caps Lock: toggle + send VK ──
-    if keysym == _CAPSLOCK_KEY:
-        if pressed:
-            _caps_on = not _caps_on
-        vk = KEYSYM_TO_VK[keysym]
-        _send_vk(vk, pressed)
-        return True
-
-    # ── Other special/modifier keys: send VK ──
-    vk = KEYSYM_TO_VK.get(keysym)
-    if vk is not None:
-        _send_vk(vk, pressed)
-        return True
+    if keysym == _CAPSLOCK_KEY and pressed:
+        _caps_on = not _caps_on
+        return False
 
     return False
 
